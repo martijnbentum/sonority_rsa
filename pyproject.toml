@@ -1,0 +1,34 @@
+[build-system]
+requires = ['setuptools>=69', 'wheel']
+build-backend = 'setuptools.build_meta'
+
+[project]
+name = 'sonority-rsa'
+version = '0.1.0'
+description = 'Bootstrap RSA for wav2vec phone-center frames and sonority.'
+readme = 'README.md'
+requires-python = '>=3.12'
+dependencies = [
+    'numpy>=1.26',
+    'scipy>=1.11',
+    'pandas>=2.0',
+    'tqdm>=4.66',
+    'phraser @ git+https://github.com/martijnbentum/phraser.git',
+    'echoframe @ git+https://github.com/martijnbentum/echoframe.git',
+    'dutch-syllabifier @ git+https://github.com/martijnbentum/dutch-syllabifier.git',
+]
+
+[project.scripts]
+sonority-rsa = 'sonority_rsa.cli:main'
+
+[project.urls]
+Homepage = 'https://github.com/martijnbentum/sonority_rsa'
+Repository = 'https://github.com/martijnbentum/sonority_rsa'
+
+[tool.setuptools.packages.find]
+where = ['src']
+
+[project.optional-dependencies]
+dev = [
+    'pytest>=8.0',
+]
