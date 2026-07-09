@@ -1,5 +1,7 @@
 """Bootstrap RSA over fetched syllable populations."""
 
+import warnings
+
 import numpy as np
 from tqdm import tqdm
 
@@ -52,6 +54,14 @@ def compute_bootstrap(population, n_syllables, n_bootstraps,
             leave=False):
         vectors, sonority, _ = sample_syllables(population, n_syllables, rng)
         scores.append(compute_sonority_rsa(vectors, sonority))
+
+    n_nan = int(np.isnan(scores).sum())
+    if n_nan:
+        warnings.warn(
+            f'layer {population.layer}: {n_nan} of {n_bootstraps} bootstrap '
+            'RSA scores are NaN (a constant or collinear vector makes '
+            'correlation distance undefined); summarize_bootstrap will '
+            'ignore them', stacklevel=2)
 
     return scores
 
