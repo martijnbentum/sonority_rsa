@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pytest
 
@@ -43,6 +45,29 @@ def test_compute_bootstrap_is_deterministic_for_a_seed():
     second = compute_bootstrap(population, 3, 4, random_state=1)
 
     assert first == second
+
+
+def test_compute_bootstrap_warns_on_nan_scores():
+    syllables = [
+        SyllableData('s1', ['p', 'a'], [0, 5], [[1.0, 1.0], [1.0, 1.0]]),
+        SyllableData('s2', ['s', 't'], [1, 0], [[1.0, 1.0], [1.0, 1.0]]),
+    ]
+    population = SyllablePopulation('wav2vec2', 0, 500, syllables, skipped={})
+
+    with pytest.warns(UserWarning, match='2 of 2 bootstrap RSA scores'):
+        scores = compute_bootstrap(population, n_syllables=2, n_bootstraps=2,
+            random_state=1)
+
+    assert all(np.isnan(score) for score in scores)
+
+
+def test_compute_bootstrap_does_not_warn_without_nan_scores():
+    population = make_population()
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        compute_bootstrap(population, n_syllables=3, n_bootstraps=2,
+            random_state=1)
 
 
 def test_summarize_bootstrap_returns_one_row_per_layer():
