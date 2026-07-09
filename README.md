@@ -32,26 +32,51 @@ sampled syllable sets.
 
 ## Install
 
-Create and activate a uv virtual environment:
+### Install with `uv pip`
 
 ```bash
+uv pip install git+https://github.com/martijnbentum/sonority_rsa.git
+```
+
+### Install with `pip`
+
+```bash
+pip install git+https://github.com/martijnbentum/sonority_rsa.git
+```
+
+The Git-based runtime dependencies `phraser`, `echoframe`, and
+`dutch-syllabifier` are declared in [`pyproject.toml`](./pyproject.toml)
+and installed automatically. Installation requires Git and network access
+to GitHub.
+
+### Editable install
+
+```bash
+git clone git@github.com:martijnbentum/sonority_rsa.git
+cd sonority_rsa
 uv venv
-source .venv/bin/activate
+uv sync
 ```
 
-Install this package:
+If the uv virtual environment does not exist yet, `uv venv` creates
+`.venv` and `uv sync` installs the package with all dependencies
+(including the `dev` group with pytest).
+
+## Development
+
+Activate the version-bump pre-commit hook once per clone:
 
 ```bash
-uv pip install -e .
+git config core.hooksPath .githooks
 ```
 
-The project depends on `phraser`, `echoframe`, and `dutch-syllabifier`, using
-the git install forms documented by those repositories:
+The hook bumps the patch version in `pyproject.toml` on every commit and
+keeps `uv.lock` out of the working tree.
+
+Run the tests:
 
 ```bash
-uv pip install git+https://github.com/martijnbentum/phraser.git
-uv pip install git+https://github.com/martijnbentum/echoframe.git
-uv pip install git+https://github.com/martijnbentum/dutch-syllabifier.git
+.venv/bin/python -m pytest
 ```
 
 ## Usage

@@ -1,30 +1,30 @@
 [build-system]
-requires = ['setuptools>=69', 'wheel']
-build-backend = 'setuptools.build_meta'
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
-name = 'sonority-rsa'
-version = '0.1.0'
-description = 'Bootstrap RSA for wav2vec phone-center frames and sonority.'
-readme = 'README.md'
-requires-python = '>=3.12'
+name = "sonority-rsa"
+version = "0.1.1"
+description = "Bootstrap RSA for wav2vec phone middle frames and sonority"
+readme = "README.md"
+requires-python = ">=3.12"
 dependencies = [
-    'numpy>=1.26',
-    'scipy>=1.11',
-    'tqdm>=4.66',
-    'phraser @ git+https://github.com/martijnbentum/phraser.git',
-    'echoframe @ git+https://github.com/martijnbentum/echoframe.git',
-    'dutch-syllabifier @ git+https://github.com/martijnbentum/dutch-syllabifier.git',
+  "numpy",
+  "scipy",
+  "tqdm",
+  "phraser @ git+https://github.com/martijnbentum/phraser.git",
+  "echoframe @ git+https://github.com/martijnbentum/echoframe.git",
+  "dutch-syllabifier @ git+https://github.com/martijnbentum/dutch-syllabifier.git",
 ]
 
 [project.urls]
-Homepage = 'https://github.com/martijnbentum/sonority_rsa'
-Repository = 'https://github.com/martijnbentum/sonority_rsa'
+Homepage = "https://github.com/martijnbentum/sonority_rsa"
+Repository = "https://github.com/martijnbentum/sonority_rsa"
 
-[tool.setuptools.packages.find]
-include = ['sonority_rsa*']
+[tool.setuptools]
+packages = ["sonority_rsa"]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
-    'pytest>=8.0',
+    "pytest>=9.0.3",
 ]
