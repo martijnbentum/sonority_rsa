@@ -1,78 +1,122 @@
+"""Real phraser segments and a real echoframe store for the tests.
+
+The corpus fixture builds a temporary phraser LMDB store with linked
+Phrase > Syllable > Phone segments and a temporary echoframe store with
+hidden-state payloads for two layers, so the tests exercise the real
+key derivation, frame timing, and middle-frame slicing.
+"""
+
+import io
+from contextlib import redirect_stdout
+
 import numpy as np
 import pytest
+from echoframe import EchoframeMetadata
+from echoframe import Store as EchoframeStore
+from phraser import Store as PhraserStore
+from phraser.models import Audio, Phone, Phrase, Syllable
+
+MODEL_NAME = 'wav2vec2'
+LAYERS = [0, 1]
+COLLAR = 500
+SOURCE_ID = 'test-source'
+N_FRAMES = 20
+DIM = 3
 
 
-class FakePhone:
-
-    def __init__(self, label, vectors, overlaps=True):
-        self.label = label
-        self.vectors = vectors
-        self.overlaps = overlaps
+def payload(phrase_index, layer):
+    """The stored hidden-state matrix for one phrase and layer."""
+    rng = np.random.default_rng(10 * phrase_index + layer)
+    return rng.normal(size=(N_FRAMES, DIM))
 
 
-class FakeSyllable:
+class Corpus:
+    """Two stored phrases with syllables, plus unusable edge cases."""
 
-    def __init__(self, key, phrase_key, phones):
-        self.key = key
-        self.phrase_key = phrase_key
-        self.phones = phones
+    def __init__(self, root):
+        with redirect_stdout(io.StringIO()):
+            self.phraser_store = PhraserStore(
+                path=str(root / 'phraser_lmdb'))
+            self.echoframe_store = EchoframeStore(root / 'echoframe')
+        self.echoframe_store.register_model(MODEL_NAME)
+        self.echoframe_store.attach_phraser_store(SOURCE_ID,
+            self.phraser_store)
+        self._build_segments()
+        self._store_payloads()
+
+    def _build_segments(self):
+        # Syllable spans never overlap: phraser resolves children by a
+        # time scan over the audio, so overlapping syllables would share
+        # phones. Phones are placed so their overlapping 20ms/25ms frames
+        # and the selected middle frame are exact: a 0-100ms phone
+        # overlaps payload rows 0-4 (middle row 2), a 100-200ms phone
+        # rows 4-9 (middle row 6), a 200-300ms phone rows 9-14 (middle
+        # row 11), and a 300-400ms phone rows 14-19 (middle row 16).
+        self.audio = self.phraser_store.create(Audio, filename='test.wav',
+            save=False)
+        self.segments = []
+        self.ph1 = self._phrase('ph1', 0, 400)
+        self.ph2 = self._phrase('ph2', 400, 800)
+        self.ph3 = self._phrase('ph3', 800, 1200)
+        self.s1 = self._syllable(self.ph1, 0, 200,
+            [('p', 0, 100), ('a', 100, 200)])
+        self.s2 = self._syllable(self.ph1, 200, 400,
+            [('s', 200, 300), ('t', 300, 400)])
+        self.s3 = self._syllable(self.ph2, 400, 600,
+            [('m', 400, 500), ('l', 500, 600)])
+        self.syllables = [self.s1, self.s2, self.s3]
+
+        # edge cases: no stored payload for ph3, phones far outside ph1's
+        # stored payload (no frames overlap), an unknown label, and a
+        # syllable never linked to a phrase
+        self.s_unstored = self._syllable(self.ph3, 800, 900,
+            [('a', 800, 900)])
+        self.s_bad = self._syllable(self.ph1, 1300, 1500,
+            [('(..)', 1300, 1400), ('a', 1400, 1500)])
+        self.s_unlinked = self._syllable(None, 1600, 1700,
+            [('a', 1600, 1700)])
+
+        for segment in self.segments:
+            segment.add_audio(self.audio, update_database=False,
+                propagate=False)
+        self.phraser_store.save_many(self.segments)
+
+    def _store_payloads(self):
+        for phrase_index, phrase in enumerate([self.ph1, self.ph2]):
+            for layer in LAYERS:
+                key = self.echoframe_store.make_echoframe_key(
+                    'hidden_state', model_name=MODEL_NAME,
+                    phraser_key=phrase.key, collar=COLLAR, layer=layer)
+                metadata = EchoframeMetadata(key,
+                    store=self.echoframe_store, model_name=MODEL_NAME,
+                    phraser_source_id=SOURCE_ID)
+                self.echoframe_store.save(key, metadata,
+                    payload(phrase_index, layer))
+
+    def _phrase(self, label, start, end):
+        phrase = self.phraser_store.create(Phrase, label=label, start=start,
+            end=end, save=False)
+        self.segments.append(phrase)
+        return phrase
+
+    def _syllable(self, phrase, start, end, phones):
+        syllable = self.phraser_store.create(Syllable, label='syl',
+            start=start, end=end, save=False)
+        if phrase is not None:
+            syllable._add_phrase(phrase, update_database=False)
+        self.segments.append(syllable)
+        for label, phone_start, phone_end in phones:
+            self._phone(syllable, label, phone_start, phone_end)
+        return syllable
+
+    def _phone(self, syllable, label, start, end):
+        phone = self.phraser_store.create(Phone, label=label, start=start,
+            end=end, save=False)
+        phone.add_parent(syllable, update_database=False)
+        self.segments.append(phone)
+        return phone
 
 
-class FakeSlicedEmbedding:
-
-    def __init__(self, data):
-        self.data = data
-
-
-class FakeEmbedding:
-
-    def __init__(self, layer):
-        self.layer = layer
-
-    def sub_embedding(self, phone, aggregate=None):
-        assert aggregate == 'middle'
-        if not phone.overlaps:
-            raise ValueError(f'no frames overlap Phone {phone.label!r}')
-        return FakeSlicedEmbedding(
-            np.asarray(phone.vectors[self.layer], dtype=float))
-
-
-class FakeStore:
-
-    root = 'fake-echoframe-store'
-
-    def __init__(self, phrase_keys, layers):
-        self.phrase_keys = set(phrase_keys)
-        self.layers = set(layers)
-        self.calls = []
-
-    def phraser_key_to_embedding(self, phraser_key, model_name, layer,
-            collar=500):
-        self.calls.append((phraser_key, model_name, layer, collar))
-        if phraser_key not in self.phrase_keys or layer not in self.layers:
-            raise ValueError(f'nothing stored for {phraser_key!r}')
-        return FakeEmbedding(layer)
-
-
-@pytest.fixture
-def toy_syllables():
-    """Three syllables over two phrases, with two stored layers."""
-    return [
-        FakeSyllable('s1', 'ph1', [
-            FakePhone('p', {0: [1.0, 0.0], 1: [0.0, 1.0]}),
-            FakePhone('a', {0: [0.0, 1.0], 1: [1.0, 0.0]}),
-        ]),
-        FakeSyllable('s2', 'ph1', [
-            FakePhone('s', {0: [0.8, 0.2], 1: [0.2, 0.8]}),
-            FakePhone('t', {0: [0.9, 0.1], 1: [0.1, 0.9]}),
-        ]),
-        FakeSyllable('s3', 'ph2', [
-            FakePhone('m', {0: [0.3, 0.7], 1: [0.7, 0.3]}),
-            FakePhone('l', {0: [0.2, 0.8], 1: [0.8, 0.2]}),
-        ]),
-    ]
-
-
-@pytest.fixture
-def toy_store():
-    return FakeStore(phrase_keys=['ph1', 'ph2'], layers=[0, 1])
+@pytest.fixture(scope='session')
+def corpus(tmp_path_factory):
+    return Corpus(tmp_path_factory.mktemp('stores'))

@@ -1,62 +1,64 @@
 import csv
 import json
 
+from conftest import LAYERS, MODEL_NAME
+
 from sonority_rsa.analysis import (display_analysis, log_sampled_keys,
     run_analysis, save_analysis)
 
 
-def run_toy_analysis(toy_syllables, toy_store, **kwargs):
-    settings = dict(model_name='wav2vec2', layers=[0, 1],
-        echoframe_store=toy_store, n_syllables=3, n_bootstraps=4,
-        random_state=1)
+def run_toy_analysis(corpus, **kwargs):
+    settings = dict(model_name=MODEL_NAME, layers=LAYERS,
+        echoframe_store=corpus.echoframe_store, n_syllables=3,
+        n_bootstraps=4, random_state=1)
     settings.update(kwargs)
-    return run_analysis(toy_syllables, **settings)
+    return run_analysis(corpus.syllables, **settings)
 
 
-def test_run_analysis_returns_summary_scores_and_log(toy_syllables,
-        toy_store):
-    summary, scores, log = run_toy_analysis(toy_syllables, toy_store)
+def test_run_analysis_returns_summary_scores_and_log(corpus):
+    summary, scores, log = run_toy_analysis(corpus)
 
-    assert [row['layer'] for row in summary] == [0, 1]
+    assert [row['layer'] for row in summary] == LAYERS
     assert all(row['n_syllables'] == 3 for row in summary)
     assert all(row['run_id'] == log['run_id'] for row in summary)
-    assert sorted(scores) == [0, 1]
+    assert sorted(scores) == LAYERS
     assert all(len(layer_scores) == 4 for layer_scores in scores.values())
 
 
-def test_run_analysis_logs_population_and_seeds(toy_syllables, toy_store):
-    summary, scores, log = run_toy_analysis(toy_syllables, toy_store)
+def test_run_analysis_logs_population_and_seeds(corpus):
+    summary, scores, log = run_toy_analysis(corpus)
 
+    expected_keys = [syllable.key.hex() for syllable in corpus.syllables]
     assert log['parameters']['seed'] == 1
-    assert log['parameters']['model_name'] == 'wav2vec2'
-    assert log['echoframe_store'] == 'fake-echoframe-store'
-    for layer in ['0', '1']:
-        entry = log['layers'][layer]
-        assert entry['syllable_keys'] == ['s1', 's2', 's3']
+    assert log['parameters']['model_name'] == MODEL_NAME
+    assert log['echoframe_store'] == str(corpus.echoframe_store.root)
+    for layer in LAYERS:
+        entry = log['layers'][str(layer)]
+        assert entry['syllable_keys'] == expected_keys
         assert entry['n_syllables_in_population'] == 3
         assert isinstance(entry['seed'], int)
 
 
-def test_run_analysis_is_deterministic_for_a_seed(toy_syllables, toy_store):
-    _, first, _ = run_toy_analysis(toy_syllables, toy_store)
-    _, second, _ = run_toy_analysis(toy_syllables, toy_store)
+def test_run_analysis_is_deterministic_for_a_seed(corpus):
+    _, first, _ = run_toy_analysis(corpus)
+    _, second, _ = run_toy_analysis(corpus)
 
     assert first == second
 
 
-def test_log_sampled_keys_replays_draws(toy_syllables, toy_store):
-    summary, scores, log = run_toy_analysis(toy_syllables, toy_store)
+def test_log_sampled_keys_replays_draws(corpus):
+    summary, scores, log = run_toy_analysis(corpus)
 
     draws = log_sampled_keys(log, layer=0)
 
+    expected_keys = {syllable.key.hex() for syllable in corpus.syllables}
     assert len(draws) == 4
     assert all(len(draw) == 3 for draw in draws)
-    assert all(key in {'s1', 's2', 's3'} for draw in draws for key in draw)
+    assert all(key in expected_keys for draw in draws for key in draw)
 
 
-def test_save_analysis_writes_results_and_log(toy_syllables, toy_store,
-        tmp_path):
-    summary, scores, log = run_toy_analysis(toy_syllables, toy_store)
+def test_save_analysis_writes_results_and_log(corpus, tmp_path):
+    summary, scores, log = run_toy_analysis(corpus)
 
     save_analysis(summary, scores, log, tmp_path)
 
@@ -73,8 +75,8 @@ def test_save_analysis_writes_results_and_log(toy_syllables, toy_store,
     assert draws == log_sampled_keys(log, layer=1)
 
 
-def test_display_analysis_prints_summary(toy_syllables, toy_store, capsys):
-    summary, scores, log = run_toy_analysis(toy_syllables, toy_store)
+def test_display_analysis_prints_summary(corpus, capsys):
+    summary, scores, log = run_toy_analysis(corpus)
 
     display_analysis(summary, scores, n=2)
 
