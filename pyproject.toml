@@ -18,9 +18,6 @@ dependencies = [
     'dutch-syllabifier @ git+https://github.com/martijnbentum/dutch-syllabifier.git',
 ]
 
-[project.scripts]
-sonority-rsa = 'sonority_rsa.cli:main'
-
 [project.urls]
 Homepage = 'https://github.com/martijnbentum/sonority_rsa'
 Repository = 'https://github.com/martijnbentum/sonority_rsa'

@@ -62,16 +62,28 @@ The table is normally prepared from `phraser` annotations, hidden-state vectors
 stored with `echoframe`, and sonority values computed with
 `dutch_syllabifier`.
 
-## CLI
+## Python / IPython Usage
 
-```bash
-sonority-rsa examples/toy_frames.csv \
-  --n-syllables 3 \
-  --n-bootstraps 100 \
-  --out results/
+```python
+from sonority_rsa.analysis import (display_analysis, run_analysis,
+    save_analysis)
+
+summary, scores = run_analysis(
+    'examples/toy_frames.csv',
+    n_syllables=3,
+    n_bootstraps=100,
+    random_state=1,
+)
+
+display_analysis(summary, scores)
+save_analysis(summary, scores, 'results/')
 ```
 
-Outputs:
+The analysis helpers are intended for IPython and notebook workflows. They
+return pandas DataFrames so you can inspect, filter, plot, or save results
+from the same session.
+
+Saved outputs:
 
 - `results/summary.csv`
 - `results/bootstrap_scores.csv`
