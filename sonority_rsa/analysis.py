@@ -137,8 +137,8 @@ def _build_log(model_name, layers, echoframe_store, n_syllables,
             echoframe_store)),
         'key_encoding': 'hex for bytes keys, text otherwise',
         'sampling': ('per layer: rng = default_rng(layer seed); one '
-            'rng.integers(0, n_population, size=n_syllables) draw per '
-            'bootstrap over syllable_keys order'),
+            'rng.choice(n_population, size=n_syllables, replace=False) '
+            'draw per bootstrap over syllable_keys order'),
         'layers': layer_logs,
     }
 

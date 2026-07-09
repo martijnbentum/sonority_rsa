@@ -17,15 +17,24 @@ def make_population():
     return SyllablePopulation('wav2vec2', 0, 500, syllables, skipped={})
 
 
-def test_sampling_preserves_duplicate_syllables():
+def test_sampling_draws_distinct_syllables():
     population = make_population()
-    rng = FixedRng([0, 0])
+    rng = FixedRng([0, 2])
 
     vectors, sonority, keys = sample_syllables(population, 2, rng)
 
-    assert keys == ['s1', 's1']
-    assert sonority.tolist() == [0, 5, 0, 5]
+    assert keys == ['s1', 's3']
+    assert len(set(keys)) == len(keys)
+    assert sonority.tolist() == [0, 5, 2, 3]
     assert vectors.shape == (4, 2)
+
+
+def test_sampling_rejects_more_syllables_than_population():
+    population = make_population()
+    rng = np.random.default_rng(0)
+
+    with pytest.raises(ValueError, match='exceeds the population size'):
+        sample_syllables(population, 4, rng)
 
 
 def test_compute_bootstrap_returns_one_score_per_repetition():
@@ -62,10 +71,23 @@ def test_compute_bootstrap_warns_on_nan_scores():
 
 
 def test_compute_bootstrap_does_not_warn_without_nan_scores():
-    population = make_population()
+    rng = np.random.default_rng(0)
+    syllables = [
+        SyllableData(f's{i}', ['p', 'a'], [i, i + 1], rng.random((2, 4)))
+        for i in range(5)
+    ]
+    population = SyllablePopulation('wav2vec2', 0, 500, syllables, skipped={})
 
     with warnings.catch_warnings():
         warnings.simplefilter('error')
+        compute_bootstrap(population, n_syllables=3, n_bootstraps=2,
+            random_state=1)
+
+
+def test_compute_bootstrap_warns_when_n_syllables_equals_population():
+    population = make_population()
+
+    with pytest.warns(UserWarning, match='equals the population size'):
         compute_bootstrap(population, n_syllables=3, n_bootstraps=2,
             random_state=1)
 
@@ -98,5 +120,6 @@ class FixedRng:
     def __init__(self, indices):
         self.indices = indices
 
-    def integers(self, low, high, size):
+    def choice(self, a, size, replace):
+        assert replace is False
         return np.asarray(self.indices)

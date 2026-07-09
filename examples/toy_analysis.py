@@ -50,19 +50,23 @@ class FakeStore:
 
 
 def toy_syllables():
-    """Three syllables over two phrases, with two stored layers."""
+    """Four syllables over two phrases, with two stored layers."""
     return [
         FakeSyllable('s1', 'ph1', [
-            FakePhone('p', {0: [1.0, 0.0], 1: [0.0, 1.0]}),
-            FakePhone('a', {0: [0.0, 1.0], 1: [1.0, 0.0]}),
+            FakePhone('p', {0: [1.0, 0.0, 0.2], 1: [0.0, 1.0, 0.3]}),
+            FakePhone('a', {0: [0.0, 1.0, 0.9], 1: [1.0, 0.0, 0.6]}),
         ]),
         FakeSyllable('s2', 'ph1', [
-            FakePhone('s', {0: [0.8, 0.2], 1: [0.2, 0.8]}),
-            FakePhone('t', {0: [0.9, 0.1], 1: [0.1, 0.9]}),
+            FakePhone('s', {0: [0.8, 0.2, 0.5], 1: [0.2, 0.8, 0.1]}),
+            FakePhone('t', {0: [0.9, 0.1, 0.7], 1: [0.1, 0.9, 0.4]}),
         ]),
         FakeSyllable('s3', 'ph2', [
-            FakePhone('m', {0: [0.3, 0.7], 1: [0.7, 0.3]}),
-            FakePhone('l', {0: [0.2, 0.8], 1: [0.8, 0.2]}),
+            FakePhone('m', {0: [0.3, 0.7, 0.1], 1: [0.7, 0.3, 0.8]}),
+            FakePhone('l', {0: [0.2, 0.8, 0.6], 1: [0.8, 0.2, 0.2]}),
+        ]),
+        FakeSyllable('s4', 'ph2', [
+            FakePhone('k', {0: [0.6, 0.4, 0.9], 1: [0.4, 0.6, 0.3]}),
+            FakePhone('r', {0: [0.5, 0.5, 0.2], 1: [0.55, 0.45, 0.7]}),
         ]),
     ]
 

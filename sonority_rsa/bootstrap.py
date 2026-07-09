@@ -10,22 +10,29 @@ from sonority_rsa.rdm import compute_sonority_rsa
 
 def sample_syllables(population, n_syllables, rng):
     """
-    Sample syllables with replacement from a fetched population.
+    Draw a subset of distinct syllables from a fetched population.
 
-    Draws one rng.integers call of size n_syllables, so a run is fully
-    replayable from the population order and the seed (see
-    replay_sampled_keys).
+    Sampling is without replacement, so every syllable in a single draw
+    is unique and no exact-duplicate rows enter the RDMs. Across draws
+    the same syllable may reappear. Uses one rng.choice call of size
+    n_syllables, so a run is fully replayable from the population order
+    and the seed (see replay_sampled_keys).
 
     population: SyllablePopulation (or sequence of SyllableData)
-    n_syllables: number of syllables to sample
+    n_syllables: number of syllables to sample (<= population size)
     rng: numpy random generator
     """
     if n_syllables <= 0:
         raise ValueError('n_syllables must be positive')
     if len(population) == 0:
         raise ValueError('cannot sample from an empty population')
+    if n_syllables > len(population):
+        raise ValueError(
+            f'n_syllables ({n_syllables}) exceeds the population size '
+            f'({len(population)}); sampling without replacement needs '
+            'n_syllables <= population size')
 
-    indices = rng.integers(0, len(population), size=n_syllables)
+    indices = rng.choice(len(population), size=n_syllables, replace=False)
     sampled = [population[int(index)] for index in indices]
 
     vectors = np.concatenate([syllable.vectors for syllable in sampled])
@@ -46,6 +53,12 @@ def compute_bootstrap(population, n_syllables, n_bootstraps,
     """
     if n_bootstraps <= 0:
         raise ValueError('n_bootstraps must be positive')
+    if n_syllables == len(population):
+        warnings.warn(
+            f'layer {population.layer}: n_syllables ({n_syllables}) equals '
+            'the population size, so every subsample is the full population '
+            'and all RSA scores will be identical (zero across-run '
+            'variability); use n_syllables < population size', stacklevel=2)
 
     rng = make_rng(random_state)
     scores = []
@@ -94,8 +107,8 @@ def replay_sampled_keys(syllable_keys, seed, n_syllables, n_bootstraps):
     Recompute the syllable keys drawn in each bootstrap of a past run.
 
     Mirrors the rng calls of compute_bootstrap exactly: one
-    rng.integers(0, n, size=n_syllables) draw per bootstrap over the
-    population order. Inputs come from a run log layer entry.
+    rng.choice(n, size=n_syllables, replace=False) draw per bootstrap
+    over the population order. Inputs come from a run log layer entry.
 
     syllable_keys: population syllable keys in fetched order
     seed: the layer seed recorded in the run log
@@ -105,7 +118,8 @@ def replay_sampled_keys(syllable_keys, seed, n_syllables, n_bootstraps):
     rng = np.random.default_rng(seed)
     draws = []
     for _ in range(n_bootstraps):
-        indices = rng.integers(0, len(syllable_keys), size=n_syllables)
+        indices = rng.choice(len(syllable_keys), size=n_syllables,
+            replace=False)
         draws.append([syllable_keys[int(index)] for index in indices])
     return draws
 

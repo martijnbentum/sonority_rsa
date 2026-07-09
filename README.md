@@ -14,10 +14,12 @@ canonical stores (nothing is duplicated into intermediate files):
 3. [dutch_syllabifier](https://github.com/martijnbentum/dutch-syllabifier)
    provides the sonority weight of each phone label.
 
-Each bootstrap sample selects syllables with replacement. All phone
-middle frames belonging to each sampled syllable are included, so a
-syllable sampled twice contributes its frames twice. For each layer, the
-package builds:
+Each sample draws a subset of distinct syllables without replacement, so
+every syllable in one draw is unique and no exact-duplicate rows enter
+the RDMs (across draws the same syllable can reappear). This requires
+`n_syllables` to be smaller than the layer population. All phone middle
+frames belonging to each sampled syllable are included. For each layer,
+the package builds:
 
 1. a wav2vec/model RDM from hidden-state vectors using correlation distance;
 2. a sonority RDM from phone sonority values using absolute distance.
@@ -149,7 +151,7 @@ master seed, which is drawn and logged when `random_state` is not given),
 the echoframe store root, and per layer: the layer seed, the skip counts,
 and the population syllable keys in fetched order (bytes keys are hex
 encoded). Because each bootstrap consumes exactly one
-`rng.integers(0, n_population, size=n_syllables)` draw, the sampled
+`rng.choice(n_population, size=n_syllables, replace=False)` draw, the sampled
 syllables of every bootstrap can be recomputed from the log alone:
 
 ```python
