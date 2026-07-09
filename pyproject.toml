@@ -11,12 +11,10 @@ requires-python = '>=3.12'
 dependencies = [
     'numpy>=1.26',
     'scipy>=1.11',
-    'pandas>=2.0',
     'tqdm>=4.66',
     'phraser @ git+https://github.com/martijnbentum/phraser.git',
     'echoframe @ git+https://github.com/martijnbentum/echoframe.git',
     'dutch-syllabifier @ git+https://github.com/martijnbentum/dutch-syllabifier.git',
-    "pyarrow>=24.0.0",
 ]
 
 [project.urls]

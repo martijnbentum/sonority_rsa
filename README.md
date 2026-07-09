@@ -3,18 +3,19 @@
 Bootstrap Representational Similarity Analysis (RSA) for wav2vec/HuBERT
 phone middle frames sampled from syllables.
 
-The pipeline connects three packages:
+The pipeline connects three packages, with phraser and echoframe as the
+canonical stores (nothing is duplicated into intermediate files):
 
 1. [phraser](https://github.com/martijnbentum/phraser) provides the
-   time-aligned phone and syllable annotations (an LMDB store);
+   time-aligned syllable and phone annotations (an LMDB store);
 2. [echoframe](https://github.com/martijnbentum/echoframe) provides the
    stored hidden-state embeddings, sliced to the middle frame of each
    phone;
 3. [dutch_syllabifier](https://github.com/martijnbentum/dutch-syllabifier)
    provides the sonority weight of each phone label.
 
-Each bootstrap sample selects syllable IDs with replacement. All
-phone middle frames belonging to each sampled syllable are included, so a
+Each bootstrap sample selects syllables with replacement. All phone
+middle frames belonging to each sampled syllable are included, so a
 syllable sampled twice contributes its frames twice. For each layer, the
 package builds:
 
@@ -23,7 +24,8 @@ package builds:
 
 The RSA score is the Spearman correlation between the upper triangles of
 those RDMs. Repeating the bootstrap returns the mean RSA, percentile
-confidence intervals, and the raw per-bootstrap scores.
+confidence intervals, the raw per-bootstrap scores, and a run log that
+makes every bootstrap draw replayable.
 
 This analysis tests whether wav2vec frame geometry reflects sonority across
 sampled syllable sets.
@@ -52,98 +54,85 @@ uv pip install git+https://github.com/martijnbentum/echoframe.git
 uv pip install git+https://github.com/martijnbentum/dutch-syllabifier.git
 ```
 
-## Extracting a Frame Table
+## Usage
 
-`build_frame_table` walks phraser phrases and builds one row per phone,
-holding the middle-frame hidden-state vector for each requested layer.
-Hidden states must already be stored in the echoframe store (typically at
-the phrase level; computing them is a separate step, see
+Input is a list of phraser `Syllable` objects (with linked phones) and an
+echoframe `Store`. Hidden states must already be stored in the echoframe
+store at the phrase level; computing them is a separate step (see
 `phraser.segment_embeddings`).
 
 ```python
-from sonority_rsa import build_frame_table, save_frame_table
-
-# phraser store with an echoframe store attached via
-# echoframe_store.attach_phraser_store(source_id, phraser_store)
-phrases = store.phrases
-
-frames = build_frame_table(phrases, 'wav2vec2', layers=[3, 7, 11])
-save_frame_table(frames, 'cache/frames.parquet')
-```
-
-Phones are skipped (and reported) when the phrase has no stored embedding
-for a layer, no frames overlap the phone, the phone has no parent
-syllable, or its label has no sonority class (e.g. silences).
-
-The resulting frame table has one row per phone middle frame:
-
-| column | description |
-| --- | --- |
-| `syllable_id` | phraser syllable key used for bootstrap sampling |
-| `phone` | phone label |
-| `sonority` | sonority weight from `dutch_syllabifier` (0-5) |
-| `layer` | wav2vec/model layer |
-| `vector` | middle-frame hidden-state vector |
-
-`save_frame_table` / `load_frame_table` cache the table as Parquet, so
-the slow LMDB extraction runs once per experiment.
-
-## Python / IPython Usage
-
-```python
+from echoframe import Store
+from phraser import Syllable, load_cache
 from sonority_rsa import display_analysis, run_analysis, save_analysis
 
-summary, scores = run_analysis(
-    'cache/frames.parquet',   # or a frame table DataFrame
+load_cache()
+store = Store('cache')
+syllables = list(Syllable.objects.filter(...))
+
+summary, scores, log = run_analysis(
+    syllables,
+    model_name='wav2vec2',
+    layers=[3, 7, 11],
+    echoframe_store=store,
     n_syllables=100,
     n_bootstraps=1000,
     random_state=1,
 )
 
 display_analysis(summary, scores)
-save_analysis(summary, scores, 'results/')
+save_analysis(summary, scores, log, 'results/')
 ```
 
-`run_analysis_from_stores` combines extraction and analysis in one call
-and additionally returns the extracted frame table:
+`run_analysis` fetches each layer's population once (one store read per
+phrase, sliced to the middle frame of each phone) and then bootstraps in
+memory. Syllables and phones that cannot be used are skipped and counted:
+a syllable not linked to a phrase, a phrase without a stored embedding, a
+phone label without a sonority class (e.g. silences), a phone no frames
+overlap, and syllables left without usable phones.
+
+The fetch and bootstrap steps are also available separately for
+interactive work:
 
 ```python
-from sonority_rsa import run_analysis_from_stores
+from sonority_rsa import fetch_syllable_data, compute_bootstrap
 
-summary, scores, frames = run_analysis_from_stores(
-    phrases,
-    'wav2vec2',
-    layers=[3, 7, 11],
-    n_syllables=100,
-    n_bootstraps=1000,
-    random_state=1,
-)
+population = fetch_syllable_data(syllables, 'wav2vec2', layer=7,
+    echoframe_store=store)
+scores = compute_bootstrap(population, n_syllables=100, n_bootstraps=1000,
+    random_state=1)
 ```
 
-The analysis helpers are intended for IPython and notebook workflows. They
-return pandas DataFrames so you can inspect, filter, plot, or save results
-from the same session. A self-contained toy run lives in
+A self-contained toy run (with fake stores, no LMDB needed) lives in
 `examples/toy_analysis.py`.
 
-Saved outputs:
+## Outputs and Traceability
 
-- `results/summary.csv`
-- `results/bootstrap_scores.csv`
+`save_analysis(summary, scores, log, out)` writes one directory per run:
 
-`summary.csv` contains one row per layer:
+- `summary.csv`: one row per layer with `run_id`, `layer`, `mean_rsa`,
+  `ci_lower`, `ci_upper`, `n_bootstraps`, `n_syllables`
+- `bootstrap_scores.csv`: one row per bootstrap with `run_id`, `layer`,
+  `bootstrap`, `rsa`
+- `run_log.json`: everything needed to trace and replay the run
 
-- `layer`
-- `mean_rsa`
-- `ci_lower`
-- `ci_upper`
-- `n_bootstraps`
-- `n_syllables`
+The `run_id` appears in both CSV files and the log, so results stay
+traceable when CSV files from several runs are combined.
 
-`bootstrap_scores.csv` contains:
+The run log records the package version, all parameters (including the
+master seed, which is drawn and logged when `random_state` is not given),
+the echoframe store root, and per layer: the layer seed, the skip counts,
+and the population syllable keys in fetched order (bytes keys are hex
+encoded). Because each bootstrap consumes exactly one
+`rng.integers(0, n_population, size=n_syllables)` draw, the sampled
+syllables of every bootstrap can be recomputed from the log alone:
 
-- `layer`
-- `bootstrap`
-- `rsa`
+```python
+from sonority_rsa import log_sampled_keys
+
+draws = log_sampled_keys('results/run_log.json', layer=7)
+draws[0]   # syllable keys drawn in bootstrap 0
+```
 
 ## Interpretation
 

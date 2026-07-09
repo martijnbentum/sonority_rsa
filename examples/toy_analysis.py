@@ -1,49 +1,81 @@
-"""Run the bootstrap RSA on a small hand-made frame table.
+"""Run the bootstrap RSA on a small fake phraser/echoframe setup.
 
-Real analyses build the frame table from phraser/echoframe stores with
-build_frame_table; this example fakes that step with inline data.
+Real analyses pass phraser Syllable objects and an echoframe Store;
+this example fakes both so it runs without any LMDB data.
 """
 
 import numpy as np
-import pandas as pd
 
-from sonority_rsa import (display_analysis, prepare_frame_table,
-    run_analysis, save_analysis)
+from sonority_rsa import display_analysis, run_analysis, save_analysis
 
 
-def toy_frame_table():
-    """Build a two-layer frame table with three toy syllables."""
-    rows = []
-    vectors = {
-        0: [[1.0, 0.0], [0.0, 1.0], [0.8, 0.2], [0.9, 0.1], [0.3, 0.7],
-            [0.2, 0.8]],
-        1: [[0.0, 1.0], [1.0, 0.0], [0.2, 0.8], [0.1, 0.9], [0.7, 0.3],
-            [0.8, 0.2]],
-    }
-    phones = [
-        ('s1', 'p', 0),
-        ('s1', 'a', 5),
-        ('s2', 's', 1),
-        ('s2', 't', 0),
-        ('s3', 'm', 2),
-        ('s3', 'l', 3),
+class FakePhone:
+
+    def __init__(self, label, vectors):
+        self.label = label
+        self.vectors = vectors
+
+
+class FakeSyllable:
+
+    def __init__(self, key, phrase_key, phones):
+        self.key = key
+        self.phrase_key = phrase_key
+        self.phones = phones
+
+
+class FakeSlicedEmbedding:
+
+    def __init__(self, data):
+        self.data = data
+
+
+class FakeEmbedding:
+
+    def __init__(self, layer):
+        self.layer = layer
+
+    def sub_embedding(self, phone, aggregate=None):
+        return FakeSlicedEmbedding(
+            np.asarray(phone.vectors[self.layer], dtype=float))
+
+
+class FakeStore:
+
+    root = 'fake-echoframe-store'
+
+    def phraser_key_to_embedding(self, phraser_key, model_name, layer,
+            collar=500):
+        return FakeEmbedding(layer)
+
+
+def toy_syllables():
+    """Three syllables over two phrases, with two stored layers."""
+    return [
+        FakeSyllable('s1', 'ph1', [
+            FakePhone('p', {0: [1.0, 0.0], 1: [0.0, 1.0]}),
+            FakePhone('a', {0: [0.0, 1.0], 1: [1.0, 0.0]}),
+        ]),
+        FakeSyllable('s2', 'ph1', [
+            FakePhone('s', {0: [0.8, 0.2], 1: [0.2, 0.8]}),
+            FakePhone('t', {0: [0.9, 0.1], 1: [0.1, 0.9]}),
+        ]),
+        FakeSyllable('s3', 'ph2', [
+            FakePhone('m', {0: [0.3, 0.7], 1: [0.7, 0.3]}),
+            FakePhone('l', {0: [0.2, 0.8], 1: [0.8, 0.2]}),
+        ]),
     ]
-    for layer, layer_vectors in vectors.items():
-        for (syllable_id, phone, sonority), vector in zip(phones,
-                layer_vectors):
-            rows.append({
-                'syllable_id': syllable_id,
-                'phone': phone,
-                'sonority': sonority,
-                'layer': layer,
-                'vector': np.array(vector),
-            })
-    return prepare_frame_table(pd.DataFrame(rows))
 
 
 if __name__ == '__main__':
-    frames = toy_frame_table()
-    summary, scores = run_analysis(frames, n_syllables=3, n_bootstraps=100,
-        random_state=1)
+    summary, scores, log = run_analysis(
+        toy_syllables(),
+        model_name='wav2vec2',
+        layers=[0, 1],
+        echoframe_store=FakeStore(),
+        n_syllables=3,
+        n_bootstraps=100,
+        random_state=1,
+    )
     display_analysis(summary, scores)
-    save_analysis(summary, scores, 'results/')
+    save_analysis(summary, scores, log, 'results/')
