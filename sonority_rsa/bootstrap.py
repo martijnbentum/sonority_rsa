@@ -15,19 +15,19 @@ def sample_syllables(df, n_syllables, rng):
     n_syllables: number of syllable IDs to sample
     rng: numpy random generator
     """
-    syllable_ids = df['syllable_id'].drop_duplicates().to_numpy()
     if n_syllables <= 0:
         raise ValueError('n_syllables must be positive')
-    if len(syllable_ids) == 0:
+    if df.empty:
         raise ValueError('cannot sample from an empty frame table')
 
+    id_to_rows = df.groupby('syllable_id', sort=False).indices
+    syllable_ids = np.asarray(list(id_to_rows))
+
     sampled_ids = rng.choice(syllable_ids, size=n_syllables, replace=True)
-    sampled_parts = []
+    rows = np.concatenate([id_to_rows[syllable_id]
+        for syllable_id in sampled_ids])
 
-    for syllable_id in sampled_ids:
-        sampled_parts.append(df[df['syllable_id'] == syllable_id])
-
-    return pd.concat(sampled_parts, ignore_index=True)
+    return df.iloc[rows].reset_index(drop=True)
 
 
 def compute_bootstrap_for_layer(df, layer, n_syllables, n_bootstraps,

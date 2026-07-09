@@ -1,11 +1,12 @@
 import pandas as pd
 
 from sonority_rsa.analysis import run_analysis, save_analysis
+from sonority_rsa.data import save_frame_table
 
 
-def test_run_analysis_returns_summary_and_scores():
+def test_run_analysis_accepts_a_frame_table(toy_frames):
     summary, scores = run_analysis(
-        'examples/toy_frames.csv',
+        toy_frames,
         n_syllables=3,
         n_bootstraps=2,
         random_state=1,
@@ -14,6 +15,20 @@ def test_run_analysis_returns_summary_and_scores():
     assert sorted(summary['layer'].tolist()) == [0, 1]
     assert summary['n_syllables'].tolist() == [3, 3]
     assert len(scores) == 4
+
+
+def test_run_analysis_accepts_a_parquet_cache_path(toy_frames, tmp_path):
+    path = tmp_path / 'frames.parquet'
+    save_frame_table(toy_frames, path)
+
+    summary, scores = run_analysis(
+        path,
+        n_syllables=3,
+        n_bootstraps=2,
+        random_state=1,
+    )
+
+    assert sorted(summary['layer'].tolist()) == [0, 1]
 
 
 def test_save_analysis_writes_expected_files(tmp_path):

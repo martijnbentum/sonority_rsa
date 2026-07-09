@@ -1,7 +1,5 @@
-"""Load and validate phone-center frame tables."""
+"""Validate and cache phone-center frame tables."""
 
-import ast
-import json
 from pathlib import Path
 
 import numpy as np
@@ -9,52 +7,6 @@ import pandas as pd
 
 
 REQUIRED_COLUMNS = ['syllable_id', 'phone', 'sonority', 'layer', 'vector']
-
-
-def load_frame_table(path):
-    """
-    Load a CSV or Parquet phone-center frame table.
-
-    path: input CSV or Parquet path
-    """
-    path = Path(path)
-    suffix = path.suffix.lower()
-
-    if suffix == '.csv':
-        df = pd.read_csv(path)
-    elif suffix in {'.parquet', '.pq'}:
-        df = pd.read_parquet(path)
-    else:
-        raise ValueError(f'unsupported input format: {path.suffix}')
-
-    return prepare_frame_table(df)
-
-
-def parse_vector(value):
-    """
-    Parse one vector value into a numpy array.
-
-    value: array-like object, JSON-like list string, or space-separated string
-    """
-    if isinstance(value, np.ndarray):
-        return value.astype(float)
-
-    if isinstance(value, (list, tuple)):
-        return np.asarray(value, dtype=float)
-
-    if pd.isna(value):
-        raise ValueError('vector value cannot be missing')
-
-    text = str(value).strip()
-    if not text:
-        raise ValueError('vector value cannot be empty')
-
-    if text[0] in '[(':
-        parsed = _parse_list_vector(text)
-        return np.asarray(parsed, dtype=float)
-
-    parts = text.replace(',', ' ').split()
-    return np.asarray([float(part) for part in parts], dtype=float)
 
 
 def prepare_frame_table(df):
@@ -68,7 +20,7 @@ def prepare_frame_table(df):
         raise ValueError(f'missing required columns: {missing}')
 
     prepared = df.copy()
-    prepared['vector'] = prepared['vector'].map(parse_vector)
+    prepared['vector'] = prepared['vector'].map(_to_vector)
     prepared['sonority'] = pd.to_numeric(prepared['sonority'])
 
     vector_lengths = prepared['vector'].map(len).unique()
@@ -82,13 +34,43 @@ def prepare_frame_table(df):
     return prepared
 
 
-def _parse_list_vector(text):
+def save_frame_table(df, path):
     """
-    Parse a vector string that looks like a Python or JSON list.
+    Save a frame table to a Parquet cache file.
 
-    text: string starting with '[' or '('
+    df: frame table DataFrame (e.g. from build_frame_table)
+    path: output Parquet path
     """
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return ast.literal_eval(text)
+    out = df.copy()
+    out['vector'] = out['vector'].map(_to_list)
+    out.to_parquet(Path(path), index=False)
+
+
+def load_frame_table(path):
+    """
+    Load a frame table from a Parquet cache file.
+
+    path: Parquet path written by save_frame_table
+    """
+    return prepare_frame_table(pd.read_parquet(Path(path)))
+
+
+def _to_vector(value):
+    """
+    Convert one vector value to a one-dimensional float numpy array.
+
+    value: numpy array or array-like sequence of floats
+    """
+    vector = np.asarray(value, dtype=float)
+    if vector.ndim != 1:
+        raise ValueError(f'vector must be one-dimensional, got {vector.ndim}')
+    return vector
+
+
+def _to_list(value):
+    """
+    Convert one vector value to a plain list for Parquet storage.
+
+    value: numpy array or array-like sequence of floats
+    """
+    return np.asarray(value, dtype=float).tolist()

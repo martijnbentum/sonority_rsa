@@ -3,7 +3,6 @@ import pandas as pd
 
 from sonority_rsa.bootstrap import (compute_bootstrap_by_layer,
     sample_syllables, summarize_bootstrap)
-from sonority_rsa.data import load_frame_table
 
 
 def test_bootstrap_sampling_preserves_duplicate_syllables():
@@ -25,11 +24,9 @@ def test_bootstrap_sampling_preserves_duplicate_syllables():
     assert sampled['syllable_id'].tolist() == ['s1', 's1', 's1', 's1']
 
 
-def test_output_contains_one_summary_row_per_layer():
-    df = load_frame_table('examples/toy_frames.csv')
-
+def test_output_contains_one_summary_row_per_layer(toy_frames):
     scores = compute_bootstrap_by_layer(
-        df,
+        toy_frames,
         n_syllables=3,
         n_bootstraps=2,
         random_state=1,
