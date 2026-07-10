@@ -4,6 +4,7 @@ import csv
 import datetime
 import json
 import secrets
+import warnings
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from sonority_rsa.sampling import (compute_rsa_scores, make_rng,
 from sonority_rsa.fetch import fetch_syllable_data
 
 SUMMARY_COLUMNS = ['run_id', 'layer', 'mean_rsa', 'ci_lower', 'ci_upper',
-    'n_subsets', 'subset_size']
+    'n_subsets', 'n_subsets_valid', 'subset_size']
 SCORE_COLUMNS = ['run_id', 'layer', 'subset', 'rsa']
 
 
@@ -26,6 +27,13 @@ def run_analysis(syllables, model_name, layers, echoframe_store,
     Returns (summary, scores, log): summary rows per layer, raw scores
     per layer, and a run log that makes every sampled subset replayable
     (see replay_sampled_keys and log_sampled_keys).
+
+    A layer with no usable data (no stored embedding for any phrase, or
+    every syllable skipped) is dropped: it is left out of summary and
+    scores and recorded under the log's 'failed_layers' key with the
+    reason. Each layer consumes exactly one seed draw whether or not it
+    fails, so a dropped layer does not shift the seeds of the others.
+    Raises ValueError only when every requested layer fails.
 
     syllables: list of phraser Syllable objects with linked phones
     model_name: registered echoframe model name (e.g. 'wav2vec2')
@@ -39,12 +47,18 @@ def run_analysis(syllables, model_name, layers, echoframe_store,
     """
     seed = _resolve_seed(random_state)
     rng = make_rng(seed)
-    scores, layer_logs = {}, {}
+    scores, layer_logs, failed_layers = {}, {}, {}
 
     for layer in layers:
-        syllable_population = fetch_syllable_data(syllables, model_name, layer,
-            echoframe_store, collar=collar)
         layer_seed = int(rng.integers(0, np.iinfo(np.uint32).max))
+        try:
+            syllable_population = fetch_syllable_data(syllables, model_name,
+                layer, echoframe_store, collar=collar)
+        except ValueError as error:
+            failed_layers[str(layer)] = {'seed': layer_seed,
+                'reason': str(error)}
+            warnings.warn(f'layer {layer} dropped: {error}', stacklevel=2)
+            continue
         scores[layer] = compute_rsa_scores(syllable_population, subset_size,
             n_subsets, random_state=layer_seed)
         layer_logs[str(layer)] = {
@@ -55,8 +69,12 @@ def run_analysis(syllables, model_name, layers, echoframe_store,
                 for key in syllable_population.keys],
         }
 
+    if not scores:
+        raise ValueError('every requested layer failed to fetch: '
+            f'{sorted(failed_layers)}')
+
     log = _build_log(model_name, layers, echoframe_store, subset_size,
-        n_subsets, collar, seed, ci, layer_logs)
+        n_subsets, collar, seed, ci, layer_logs, failed_layers)
     summary = summarize_rsa_scores(scores, ci=ci)
     for row in summary:
         row['subset_size'] = subset_size
@@ -114,11 +132,12 @@ def log_sampled_keys(log, layer):
 
 
 def _build_log(model_name, layers, echoframe_store, subset_size,
-        n_subsets, collar, seed, ci, layer_logs):
+        n_subsets, collar, seed, ci, layer_logs, failed_layers):
     """
     Assemble the run log dict.
 
     layer_logs: per-layer seed, population keys, and skip counts
+    failed_layers: per-layer seed and reason for each dropped layer
     """
     now = datetime.datetime.now().astimezone()
     return {
@@ -141,6 +160,7 @@ def _build_log(model_name, layers, echoframe_store, subset_size,
             'rng.choice(n_population, size=subset_size, replace=False) '
             'draw per subset over syllable_keys order'),
         'layers': layer_logs,
+        'failed_layers': failed_layers,
     }
 
 

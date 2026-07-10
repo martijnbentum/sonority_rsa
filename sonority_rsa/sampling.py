@@ -89,6 +89,11 @@ def summarize_rsa_scores(scores_by_layer, ci=95):
     """
     Summarize RSA scores per layer.
 
+    mean_rsa and the confidence interval are computed over the non-NaN
+    scores only; n_subsets is the number of subsets drawn and
+    n_subsets_valid is how many were non-NaN (the effective sample behind
+    mean/CI).
+
     scores_by_layer: dict mapping layer to a list of RSA scores
     ci: percentile confidence interval width
     """
@@ -97,12 +102,16 @@ def summarize_rsa_scores(scores_by_layer, ci=95):
 
     for layer in sorted(scores_by_layer):
         rsa = np.asarray(scores_by_layer[layer], dtype=float)
+        valid = rsa[~np.isnan(rsa)]
         rows.append({
             'layer': layer,
-            'mean_rsa': float(np.nanmean(rsa)),
-            'ci_lower': float(np.nanpercentile(rsa, alpha)),
-            'ci_upper': float(np.nanpercentile(rsa, 100 - alpha)),
+            'mean_rsa': float(np.mean(valid)) if valid.size else float('nan'),
+            'ci_lower': (float(np.percentile(valid, alpha))
+                if valid.size else float('nan')),
+            'ci_upper': (float(np.percentile(valid, 100 - alpha))
+                if valid.size else float('nan')),
             'n_subsets': len(rsa),
+            'n_subsets_valid': int(valid.size),
         })
 
     return rows

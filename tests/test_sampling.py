@@ -100,7 +100,29 @@ def test_summarize_rsa_scores_returns_one_row_per_layer():
     assert [row['layer'] for row in summary] == [0, 1]
     assert summary[0]['mean_rsa'] == pytest.approx(0.2)
     assert summary[0]['n_subsets'] == 3
+    assert summary[0]['n_subsets_valid'] == 3
     assert summary[0]['ci_lower'] <= summary[0]['ci_upper']
+
+
+def test_summarize_rsa_scores_ignores_nan_but_counts_all_subsets():
+    scores = {0: [0.1, float('nan'), 0.3]}
+
+    summary = summarize_rsa_scores(scores)
+
+    assert summary[0]['n_subsets'] == 3
+    assert summary[0]['n_subsets_valid'] == 2
+    assert summary[0]['mean_rsa'] == pytest.approx(0.2)
+
+
+def test_summarize_rsa_scores_handles_all_nan():
+    scores = {0: [float('nan'), float('nan')]}
+
+    summary = summarize_rsa_scores(scores)
+
+    assert summary[0]['n_subsets'] == 2
+    assert summary[0]['n_subsets_valid'] == 0
+    assert np.isnan(summary[0]['mean_rsa'])
+    assert np.isnan(summary[0]['ci_lower'])
 
 
 def test_replay_reproduces_the_sampled_keys():

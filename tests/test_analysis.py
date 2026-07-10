@@ -1,6 +1,7 @@
 import csv
 import json
 
+import pytest
 from conftest import LAYERS, MODEL_NAME
 
 from sonority_rsa.analysis import (display_analysis, log_sampled_keys,
@@ -37,6 +38,24 @@ def test_run_analysis_logs_population_and_seeds(corpus):
         assert entry['syllable_keys'] == expected_keys
         assert entry['n_syllables_in_population'] == 3
         assert isinstance(entry['seed'], int)
+
+
+def test_run_analysis_drops_layer_without_data(corpus):
+    # the corpus stores layers 0 and 1 only, so layer 9 has no embeddings
+    with pytest.warns(UserWarning, match='layer 9 dropped'):
+        summary, scores, log = run_toy_analysis(corpus, layers=[0, 9])
+
+    assert list(scores) == [0]
+    assert [row['layer'] for row in summary] == [0]
+    assert list(log['layers']) == ['0']
+    assert '0' not in log['failed_layers']
+    assert 'seed' in log['failed_layers']['9']
+    assert log['failed_layers']['9']['reason']
+
+
+def test_run_analysis_raises_when_every_layer_fails(corpus):
+    with pytest.raises(ValueError, match='every requested layer failed'):
+        run_toy_analysis(corpus, layers=[8, 9])
 
 
 def test_run_analysis_is_deterministic_for_a_seed(corpus):

@@ -138,7 +138,10 @@ A self-contained toy run (with fake stores, no LMDB needed) lives in
 `save_analysis(summary, scores, log, out)` writes one directory per run:
 
 - `summary.csv`: one row per layer with `run_id`, `layer`, `mean_rsa`,
-  `ci_lower`, `ci_upper`, `n_subsets`, `subset_size`
+  `ci_lower`, `ci_upper`, `n_subsets`, `n_subsets_valid`, `subset_size`
+  (`n_subsets` is the number of subsets drawn; `n_subsets_valid` is how
+  many were non-NaN, i.e. the effective sample behind `mean_rsa` and the
+  interval)
 - `rsa_scores.csv`: one row per subset with `run_id`, `layer`,
   `subset`, `rsa`
 - `run_log.json`: everything needed to trace and replay the run
@@ -150,7 +153,12 @@ The run log records the package version, all parameters (including the
 master seed, which is drawn and logged when `random_state` is not given),
 the echoframe store root, and per layer: the layer seed, the skip counts,
 and the population syllable keys in fetched order (bytes keys are hex
-encoded). Because each subset consumes exactly one
+encoded). A layer with no usable data is dropped from `summary` and
+`scores` and recorded instead under the log's `failed_layers` key (its
+seed and the reason); every requested layer still consumes one seed draw,
+so a dropped layer leaves the surviving layers' seeds unchanged. A run in
+which every layer fails raises `ValueError`. Because each subset consumes
+exactly one
 `rng.choice(n_population, size=subset_size, replace=False)` draw, the sampled
 syllables of every subset can be recomputed from the log alone:
 
