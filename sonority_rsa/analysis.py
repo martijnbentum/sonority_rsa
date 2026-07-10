@@ -1,4 +1,4 @@
-"""Run bootstrap RSA from phraser/echoframe stores and log the run."""
+"""Run subset-sampled RSA from phraser/echoframe stores and log the run."""
 
 import csv
 import datetime
@@ -9,30 +9,30 @@ from pathlib import Path
 
 import numpy as np
 
-from sonority_rsa.bootstrap import (compute_bootstrap, make_rng,
-    replay_sampled_keys, summarize_bootstrap)
+from sonority_rsa.sampling import (compute_rsa_scores, make_rng,
+    replay_sampled_keys, summarize_rsa_scores)
 from sonority_rsa.fetch import fetch_syllable_data
 
 SUMMARY_COLUMNS = ['run_id', 'layer', 'mean_rsa', 'ci_lower', 'ci_upper',
-    'n_bootstraps', 'n_syllables']
-SCORE_COLUMNS = ['run_id', 'layer', 'bootstrap', 'rsa']
+    'n_subsets', 'subset_size']
+SCORE_COLUMNS = ['run_id', 'layer', 'subset', 'rsa']
 
 
 def run_analysis(syllables, model_name, layers, echoframe_store,
-        n_syllables, n_bootstraps, collar=500, random_state=None, ci=95):
+        subset_size, n_subsets, collar=500, random_state=None, ci=95):
     """
-    Fetch syllable populations per layer and run bootstrap RSA.
+    Fetch syllable populations per layer and run subset-sampled RSA.
 
     Returns (summary, scores, log): summary rows per layer, raw scores
-    per layer, and a run log that makes every bootstrap draw replayable
+    per layer, and a run log that makes every sampled subset replayable
     (see replay_sampled_keys and log_sampled_keys).
 
     syllables: list of phraser Syllable objects with linked phones
     model_name: registered echoframe model name (e.g. 'wav2vec2')
     layers: list of hidden-state layers to analyze
     echoframe_store: echoframe Store holding the hidden states
-    n_syllables: number of sampled syllables per bootstrap
-    n_bootstraps: number of bootstrap repetitions
+    subset_size: number of syllables per subset
+    n_subsets: number of subsets to draw
     collar: milliseconds of context stored around the phrase
     random_state: optional integer seed (drawn and logged when None)
     ci: percentile confidence interval width
@@ -42,30 +42,31 @@ def run_analysis(syllables, model_name, layers, echoframe_store,
     scores, layer_logs = {}, {}
 
     for layer in layers:
-        population = fetch_syllable_data(syllables, model_name, layer,
+        syllable_population = fetch_syllable_data(syllables, model_name, layer,
             echoframe_store, collar=collar)
         layer_seed = int(rng.integers(0, np.iinfo(np.uint32).max))
-        scores[layer] = compute_bootstrap(population, n_syllables,
-            n_bootstraps, random_state=layer_seed)
+        scores[layer] = compute_rsa_scores(syllable_population, subset_size,
+            n_subsets, random_state=layer_seed)
         layer_logs[str(layer)] = {
             'seed': layer_seed,
-            'n_syllables_in_population': len(population),
-            'skipped': population.skipped,
-            'syllable_keys': [_key_to_text(key) for key in population.keys],
+            'n_syllables_in_population': len(syllable_population),
+            'skipped': syllable_population.skipped,
+            'syllable_keys': [_key_to_text(key)
+                for key in syllable_population.keys],
         }
 
-    log = _build_log(model_name, layers, echoframe_store, n_syllables,
-        n_bootstraps, collar, seed, ci, layer_logs)
-    summary = summarize_bootstrap(scores, ci=ci)
+    log = _build_log(model_name, layers, echoframe_store, subset_size,
+        n_subsets, collar, seed, ci, layer_logs)
+    summary = summarize_rsa_scores(scores, ci=ci)
     for row in summary:
-        row['n_syllables'] = n_syllables
+        row['subset_size'] = subset_size
         row['run_id'] = log['run_id']
     return summary, scores, log
 
 
 def save_analysis(summary, scores, log, out):
     """
-    Save summary, raw bootstrap scores, and the run log to a directory.
+    Save summary, raw RSA scores, and the run log to a directory.
 
     summary: summary rows from run_analysis
     scores: raw scores per layer from run_analysis
@@ -75,7 +76,7 @@ def save_analysis(summary, scores, log, out):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     _write_csv(out / 'summary.csv', SUMMARY_COLUMNS, summary)
-    _write_csv(out / 'bootstrap_scores.csv', SCORE_COLUMNS,
+    _write_csv(out / 'rsa_scores.csv', SCORE_COLUMNS,
         _score_rows(scores, log['run_id']))
     with open(out / 'run_log.json', 'w') as fout:
         json.dump(log, fout, indent=2)
@@ -83,7 +84,7 @@ def save_analysis(summary, scores, log, out):
 
 def display_analysis(summary, scores, n=10):
     """
-    Print the summary table and a preview of raw bootstrap scores.
+    Print the summary table and a preview of raw RSA scores.
 
     summary: summary rows from run_analysis
     scores: raw scores per layer from run_analysis
@@ -99,7 +100,7 @@ def display_analysis(summary, scores, n=10):
 
 def log_sampled_keys(log, layer):
     """
-    Recompute the syllable keys drawn in each bootstrap of a logged run.
+    Recompute the syllable keys drawn in each subset of a logged run.
 
     log: run log dict (or path to a run_log.json file)
     layer: layer to replay
@@ -109,11 +110,11 @@ def log_sampled_keys(log, layer):
             log = json.load(fin)
     entry = log['layers'][str(layer)]
     return replay_sampled_keys(entry['syllable_keys'], entry['seed'],
-        log['parameters']['n_syllables'], log['parameters']['n_bootstraps'])
+        log['parameters']['subset_size'], log['parameters']['n_subsets'])
 
 
-def _build_log(model_name, layers, echoframe_store, n_syllables,
-        n_bootstraps, collar, seed, ci, layer_logs):
+def _build_log(model_name, layers, echoframe_store, subset_size,
+        n_subsets, collar, seed, ci, layer_logs):
     """
     Assemble the run log dict.
 
@@ -128,8 +129,8 @@ def _build_log(model_name, layers, echoframe_store, n_syllables,
             'model_name': model_name,
             'layers': list(layers),
             'collar': collar,
-            'n_syllables': n_syllables,
-            'n_bootstraps': n_bootstraps,
+            'subset_size': subset_size,
+            'n_subsets': n_subsets,
             'ci': ci,
             'seed': seed,
         },
@@ -137,8 +138,8 @@ def _build_log(model_name, layers, echoframe_store, n_syllables,
             echoframe_store)),
         'key_encoding': 'hex for bytes keys, text otherwise',
         'sampling': ('per layer: rng = default_rng(layer seed); one '
-            'rng.choice(n_population, size=n_syllables, replace=False) '
-            'draw per bootstrap over syllable_keys order'),
+            'rng.choice(n_population, size=subset_size, replace=False) '
+            'draw per subset over syllable_keys order'),
         'layers': layer_logs,
     }
 
@@ -168,16 +169,16 @@ def _key_to_text(key):
 
 def _score_rows(scores, run_id):
     """
-    Flatten per-layer scores into bootstrap_scores.csv rows.
+    Flatten per-layer scores into rsa_scores.csv rows.
 
     scores: raw scores per layer from run_analysis
     run_id: run identifier from the run log
     """
     rows = []
     for layer in sorted(scores):
-        for bootstrap, rsa in enumerate(scores[layer]):
+        for subset, rsa in enumerate(scores[layer]):
             rows.append({'run_id': run_id, 'layer': layer,
-                'bootstrap': bootstrap, 'rsa': rsa})
+                'subset': subset, 'rsa': rsa})
     return rows
 
 

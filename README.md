@@ -15,9 +15,9 @@ canonical stores (nothing is duplicated into intermediate files):
    provides the sonority weight of each phone label.
 
 Each sample draws a subset of distinct syllables without replacement, so
-every syllable in one draw is unique and no exact-duplicate rows enter
-the RDMs (across draws the same syllable can reappear). This requires
-`n_syllables` to be smaller than the layer population. All phone middle
+every syllable in one sample is unique and no exact-duplicate rows enter
+the RDMs (across samples the same syllable can reappear). This requires
+`subset_size` to be smaller than the layer population. All phone middle
 frames belonging to each sampled syllable are included. For each layer,
 the package builds:
 
@@ -25,9 +25,9 @@ the package builds:
 2. a sonority RDM from phone sonority values using absolute distance.
 
 The RSA score is the Spearman correlation between the upper triangles of
-those RDMs. Repeating the bootstrap returns the mean RSA, percentile
-confidence intervals, the raw per-bootstrap scores, and a run log that
-makes every bootstrap draw replayable.
+those RDMs. Repeating over many samples returns the mean RSA, percentile
+confidence intervals, the raw per-subset scores, and a run log that makes
+every sampled subset replayable.
 
 This analysis tests whether wav2vec frame geometry reflects sonority across
 sampled syllable sets.
@@ -102,8 +102,8 @@ summary, scores, log = run_analysis(
     model_name='wav2vec2',
     layers=[3, 7, 11],
     echoframe_store=store,
-    n_syllables=100,
-    n_bootstraps=1000,
+    subset_size=100,
+    n_subsets=1000,
     random_state=1,
 )
 
@@ -112,21 +112,21 @@ save_analysis(summary, scores, log, 'results/')
 ```
 
 `run_analysis` fetches each layer's population once (one store read per
-phrase, sliced to the middle frame of each phone) and then bootstraps in
+phrase, sliced to the middle frame of each phone) and then samples in
 memory. Syllables and phones that cannot be used are skipped and counted:
 a syllable not linked to a phrase, a phrase without a stored embedding, a
 phone label without a sonority class (e.g. silences), a phone no frames
 overlap, and syllables left without usable phones.
 
-The fetch and bootstrap steps are also available separately for
+The fetch and sampling steps are also available separately for
 interactive work:
 
 ```python
-from sonority_rsa import fetch_syllable_data, compute_bootstrap
+from sonority_rsa import fetch_syllable_data, compute_rsa_scores
 
 population = fetch_syllable_data(syllables, 'wav2vec2', layer=7,
     echoframe_store=store)
-scores = compute_bootstrap(population, n_syllables=100, n_bootstraps=1000,
+scores = compute_rsa_scores(population, subset_size=100, n_subsets=1000,
     random_state=1)
 ```
 
@@ -138,9 +138,9 @@ A self-contained toy run (with fake stores, no LMDB needed) lives in
 `save_analysis(summary, scores, log, out)` writes one directory per run:
 
 - `summary.csv`: one row per layer with `run_id`, `layer`, `mean_rsa`,
-  `ci_lower`, `ci_upper`, `n_bootstraps`, `n_syllables`
-- `bootstrap_scores.csv`: one row per bootstrap with `run_id`, `layer`,
-  `bootstrap`, `rsa`
+  `ci_lower`, `ci_upper`, `n_subsets`, `subset_size`
+- `rsa_scores.csv`: one row per subset with `run_id`, `layer`,
+  `subset`, `rsa`
 - `run_log.json`: everything needed to trace and replay the run
 
 The `run_id` appears in both CSV files and the log, so results stay
@@ -150,15 +150,15 @@ The run log records the package version, all parameters (including the
 master seed, which is drawn and logged when `random_state` is not given),
 the echoframe store root, and per layer: the layer seed, the skip counts,
 and the population syllable keys in fetched order (bytes keys are hex
-encoded). Because each bootstrap consumes exactly one
-`rng.choice(n_population, size=n_syllables, replace=False)` draw, the sampled
-syllables of every bootstrap can be recomputed from the log alone:
+encoded). Because each subset consumes exactly one
+`rng.choice(n_population, size=subset_size, replace=False)` draw, the sampled
+syllables of every subset can be recomputed from the log alone:
 
 ```python
 from sonority_rsa import log_sampled_keys
 
 draws = log_sampled_keys('results/run_log.json', layer=7)
-draws[0]   # syllable keys drawn in bootstrap 0
+draws[0]   # syllable keys drawn in subset 0
 ```
 
 ## Interpretation

@@ -1,4 +1,4 @@
-"""Run the bootstrap RSA on a small fake phraser/echoframe setup.
+"""Run the subset-sampled RSA on a small fake phraser/echoframe setup.
 
 Real analyses pass phraser Syllable objects and an echoframe Store;
 this example fakes both so it runs without any LMDB data.
@@ -77,8 +77,8 @@ if __name__ == '__main__':
         model_name='wav2vec2',
         layers=[0, 1],
         echoframe_store=FakeStore(),
-        n_syllables=3,
-        n_bootstraps=100,
+        subset_size=3,
+        n_subsets=100,
         random_state=1,
     )
     display_analysis(summary, scores)

@@ -9,8 +9,8 @@ from sonority_rsa.analysis import (display_analysis, log_sampled_keys,
 
 def run_toy_analysis(corpus, **kwargs):
     settings = dict(model_name=MODEL_NAME, layers=LAYERS,
-        echoframe_store=corpus.echoframe_store, n_syllables=3,
-        n_bootstraps=4, random_state=1)
+        echoframe_store=corpus.echoframe_store, subset_size=3,
+        n_subsets=4, random_state=1)
     settings.update(kwargs)
     return run_analysis(corpus.syllables, **settings)
 
@@ -19,7 +19,7 @@ def test_run_analysis_returns_summary_scores_and_log(corpus):
     summary, scores, log = run_toy_analysis(corpus)
 
     assert [row['layer'] for row in summary] == LAYERS
-    assert all(row['n_syllables'] == 3 for row in summary)
+    assert all(row['subset_size'] == 3 for row in summary)
     assert all(row['run_id'] == log['run_id'] for row in summary)
     assert sorted(scores) == LAYERS
     assert all(len(layer_scores) == 4 for layer_scores in scores.values())
@@ -65,7 +65,7 @@ def test_save_analysis_writes_results_and_log(corpus, tmp_path):
     with open(tmp_path / 'run_log.json') as fin:
         saved_log = json.load(fin)
     assert saved_log['run_id'] == log['run_id']
-    with open(tmp_path / 'bootstrap_scores.csv') as fin:
+    with open(tmp_path / 'rsa_scores.csv') as fin:
         rows = list(csv.DictReader(fin))
     assert len(rows) == 8
     assert rows[0]['run_id'] == log['run_id']

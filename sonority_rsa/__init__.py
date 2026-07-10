@@ -1,12 +1,12 @@
-"""Bootstrap RSA for wav2vec phone middle frames and sonority."""
+"""Subset-sampled RSA for wav2vec phone middle frames and sonority."""
 
 from sonority_rsa.analysis import display_analysis
 from sonority_rsa.analysis import log_sampled_keys
 from sonority_rsa.analysis import run_analysis
 from sonority_rsa.analysis import save_analysis
-from sonority_rsa.bootstrap import (
-    compute_bootstrap, replay_sampled_keys, sample_syllables,
-    summarize_bootstrap)
+from sonority_rsa.sampling import (
+    compute_rsa_scores, replay_sampled_keys, sample_syllables,
+    summarize_rsa_scores)
 from sonority_rsa.fetch import SyllableData
 from sonority_rsa.fetch import SyllablePopulation
 from sonority_rsa.fetch import fetch_syllable_data
@@ -17,7 +17,7 @@ from sonority_rsa.rdm import (compute_sonority_rsa, correlation_rdm,
 __all__ = [
     'SyllableData',
     'SyllablePopulation',
-    'compute_bootstrap',
+    'compute_rsa_scores',
     'compute_sonority_rsa',
     'correlation_rdm',
     'display_analysis',
@@ -30,6 +30,6 @@ __all__ = [
     'save_analysis',
     'sonority_rdm',
     'spearman_rsa',
-    'summarize_bootstrap',
+    'summarize_rsa_scores',
     'upper_triangle',
 ]
