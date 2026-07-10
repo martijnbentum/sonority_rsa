@@ -58,6 +58,14 @@ def test_run_analysis_raises_when_every_layer_fails(corpus):
         run_toy_analysis(corpus, layers=[8, 9])
 
 
+def test_run_analysis_defaults_seed_to_42(corpus):
+    settings = dict(model_name=MODEL_NAME, layers=LAYERS,
+        echoframe_store=corpus.echoframe_store, subset_size=3, n_subsets=4)
+    _, _, log = run_analysis(corpus.syllables, **settings)
+
+    assert log['parameters']['seed'] == 42
+
+
 def test_run_analysis_is_deterministic_for_a_seed(corpus):
     _, first, _ = run_toy_analysis(corpus)
     _, second, _ = run_toy_analysis(corpus)

@@ -154,8 +154,9 @@ The `run_id` appears in both CSV files and the log, so results stay
 traceable when CSV files from several runs are combined.
 
 The run log records the package version, all parameters (including the
-master seed, which is drawn and logged when `random_state` is not given),
-the echoframe store root, and per layer: the layer seed, the skip counts,
+master seed, which defaults to 42 and can be overridden with
+`random_state`), the echoframe store root, and per layer: the layer seed,
+the skip counts,
 and the population syllable keys in fetched order (bytes keys are hex
 encoded). A layer with no usable data is dropped from `summary` and
 `scores` and recorded instead under the log's `failed_layers` key (its

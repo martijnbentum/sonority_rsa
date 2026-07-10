@@ -20,7 +20,7 @@ SCORE_COLUMNS = ['run_id', 'layer', 'subset', 'rsa']
 
 
 def run_analysis(syllables, model_name, layers, echoframe_store,
-        subset_size, n_subsets, collar=500, random_state=None, ci=95):
+        subset_size, n_subsets, collar=500, random_state=42, ci=95):
     """
     Fetch syllable populations per layer and run subset-sampled RSA.
 
@@ -42,10 +42,10 @@ def run_analysis(syllables, model_name, layers, echoframe_store,
     subset_size: number of syllables per subset
     n_subsets: number of subsets to draw
     collar: milliseconds of context stored around the phrase
-    random_state: optional integer seed (drawn and logged when None)
+    random_state: integer master seed (default 42), logged for replay
     ci: percentile confidence interval width
     """
-    seed = _resolve_seed(random_state)
+    seed = int(random_state)
     rng = make_rng(seed)
     scores, layer_logs, failed_layers = {}, {}, {}
 
@@ -162,18 +162,6 @@ def _build_log(model_name, layers, echoframe_store, subset_size,
         'layers': layer_logs,
         'failed_layers': failed_layers,
     }
-
-
-def _resolve_seed(random_state):
-    """
-    Return an integer seed, drawing a fresh one when none is given.
-
-    random_state: None or integer seed
-    """
-    if random_state is None:
-        return int(np.random.default_rng().integers(0,
-            np.iinfo(np.uint32).max))
-    return int(random_state)
 
 
 def _key_to_text(key):
