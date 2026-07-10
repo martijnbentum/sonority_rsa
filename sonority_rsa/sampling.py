@@ -72,6 +72,16 @@ def compute_rsa_scores(syllable_population, subset_size, n_subsets,
             leave=False):
         vectors, sonority, _ = sample_syllables(syllable_population,
             subset_size, rng)
+        if np.ptp(sonority) == 0:
+            # backstop: fetch_syllable_data already rejects a population
+            # with a single sonority class, so a subset with no sonority
+            # variation should be unreachable; guard it rather than emit a
+            # silent NaN from the constant sonority RDM
+            raise ValueError(
+                f'layer {syllable_population.layer}: a sampled subset has a '
+                'single sonority class, so the sonority RDM has no '
+                'variation; this should not occur for a population with '
+                'multiple classes')
         scores.append(compute_sonority_rsa(vectors, sonority))
 
     n_nan = int(np.isnan(scores).sum())

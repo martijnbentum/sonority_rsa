@@ -4,7 +4,7 @@ import numpy as np
 from dutch_syllabifier.sonority import sonority_weight
 
 SKIP_REASONS = ['no_phrase', 'no_embedding', 'no_sonority', 'no_frames',
-    'no_phones']
+    'constant_vector', 'no_phones']
 
 
 class SyllableData:
@@ -75,7 +75,13 @@ def fetch_syllable_data(syllables, model_name, layer, echoframe_store,
     the middle frame of each phone. Syllables are skipped (and counted)
     when they are not linked to a phrase, the phrase has no stored
     embedding, or none of their phones is usable; phones are skipped when
-    their label has no sonority class or no frames overlap them.
+    their label has no sonority class, no frames overlap them, or their
+    stored vector is constant across features (a broken/zeroed embedding,
+    whose correlation distance would be undefined).
+
+    Raises ValueError when no syllable is usable, or when every fetched
+    phone shares one sonority class (RSA needs sonority variation). Under
+    run_analysis the latter drops just that layer rather than aborting.
 
     syllables: list of phraser Syllable objects with linked phones
     model_name: registered echoframe model name (e.g. 'wav2vec2')
@@ -106,6 +112,13 @@ def fetch_syllable_data(syllables, model_name, layer, echoframe_store,
         raise ValueError(
             'no syllables fetched; are hidden states stored for these '
             f'phrases (model_name={model_name!r}, layer={layer})?')
+
+    sonority_classes = np.unique(np.concatenate([s.sonority for s in data]))
+    if sonority_classes.size < 2:
+        raise ValueError(
+            'all fetched phones share one sonority class '
+            f'(model_name={model_name!r}, layer={layer}); RSA needs '
+            'sonority variation across the population')
 
     return SyllablePopulation(model_name, layer, collar, data, skipped)
 
@@ -158,9 +171,17 @@ def _syllable_data(syllable, embedding, skipped):
         except ValueError:
             skipped['no_frames'] += 1
             continue
+        vector = np.asarray(sub.data, dtype=float)
+        if vector.size and np.ptp(vector) == 0:
+            # a vector that is constant across features has zero variance,
+            # which makes its correlation distance to every other phone
+            # undefined (NaN); a real middle frame is never constant, so
+            # this flags a broken/zeroed embedding rather than valid data
+            skipped['constant_vector'] += 1
+            continue
         phone_labels.append(phone.label)
         sonority.append(weight)
-        vectors.append(sub.data)
+        vectors.append(vector)
     if not phone_labels:
         skipped['no_phones'] += 1
         return None

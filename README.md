@@ -116,7 +116,11 @@ phrase, sliced to the middle frame of each phone) and then samples in
 memory. Syllables and phones that cannot be used are skipped and counted:
 a syllable not linked to a phrase, a phrase without a stored embedding, a
 phone label without a sonority class (e.g. silences), a phone no frames
-overlap, and syllables left without usable phones.
+overlap, a phone whose stored vector is constant across features (a
+broken/zeroed embedding), and syllables left without usable phones. A
+layer whose usable phones all share one sonority class has no variation to
+correlate against, so it is dropped like any other unusable layer (issue
+recorded under `failed_layers`).
 
 The fetch and sampling steps are also available separately for
 interactive work:

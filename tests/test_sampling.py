@@ -84,6 +84,19 @@ def test_compute_rsa_scores_does_not_warn_without_nan_scores():
             random_state=1)
 
 
+def test_compute_rsa_scores_raises_on_single_sonority_subset():
+    rng = np.random.default_rng(0)
+    syllables = [
+        SyllableData(f's{i}', ['p', 'a'], [3, 3], rng.random((2, 4)))
+        for i in range(3)
+    ]
+    population = SyllablePopulation('wav2vec2', 0, 500, syllables, skipped={})
+
+    with pytest.raises(ValueError, match='single sonority class'):
+        compute_rsa_scores(population, subset_size=2, n_subsets=1,
+            random_state=1)
+
+
 def test_compute_rsa_scores_warns_when_subset_size_equals_population():
     population = make_population()
 

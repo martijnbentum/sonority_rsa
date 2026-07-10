@@ -56,12 +56,49 @@ def test_fetch_skips_unusable_syllables_and_phones(corpus):
 
     assert population.keys == [corpus.s1.key]
     assert population.skipped == {'no_phrase': 1, 'no_embedding': 1,
-        'no_sonority': 1, 'no_frames': 1, 'no_phones': 1}
+        'no_sonority': 1, 'no_frames': 1, 'constant_vector': 0,
+        'no_phones': 1}
 
 
 def test_fetch_raises_when_nothing_is_stored(corpus):
     with pytest.raises(ValueError, match='no syllables fetched'):
         fetch(corpus, [corpus.s_unstored])
+
+
+class Sub:
+    def __init__(self, data):
+        self.data = data
+
+
+class ConstantForLabel:
+    """Fake embedding: a constant vector for one phone label, else varied."""
+
+    def __init__(self, constant_label):
+        self.constant_label = constant_label
+
+    def sub_embedding(self, phone, aggregate=None):
+        if phone.label == self.constant_label:
+            return Sub(np.ones(3))
+        return Sub(np.array([1.0, 2.0, 3.0]))
+
+
+def test_fetch_skips_phones_with_constant_vectors(corpus, monkeypatch):
+    monkeypatch.setattr(corpus.echoframe_store, 'phraser_key_to_embedding',
+        lambda *a, **k: ConstantForLabel('a'))
+
+    population = fetch(corpus, corpus.syllables)
+
+    # only s1 has an 'a' phone; it is dropped, the rest of s1 survives
+    assert population.skipped['constant_vector'] == 1
+    assert population[0].phone_labels == ['p']
+
+
+def test_fetch_raises_when_population_has_one_sonority_class(corpus,
+        monkeypatch):
+    monkeypatch.setattr('sonority_rsa.fetch.phone_sonority', lambda phone: 5)
+
+    with pytest.raises(ValueError, match='one sonority class'):
+        fetch(corpus, corpus.syllables)
 
 
 def test_phone_sonority_returns_none_for_unknown_labels():
