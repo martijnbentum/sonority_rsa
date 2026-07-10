@@ -20,7 +20,8 @@ SCORE_COLUMNS = ['run_id', 'layer', 'subset', 'rsa']
 
 
 def run_analysis(syllables, model_name, layers, echoframe_store,
-        subset_size, n_subsets, collar=500, random_state=42, ci=95):
+        subset_size, n_subsets, collar=500, random_state=42, ci=95,
+        verbose=False):
     """
     Fetch syllable populations per layer and run subset-sampled RSA.
 
@@ -44,6 +45,8 @@ def run_analysis(syllables, model_name, layers, echoframe_store,
     collar: milliseconds of context stored around the phrase
     random_state: integer master seed (default 42), logged for replay
     ci: percentile confidence interval width
+    verbose: print each layer's skip report (off by default; the same
+        counts are recorded per layer in the run log regardless)
     """
     seed = int(random_state)
     rng = make_rng(seed)
@@ -53,7 +56,7 @@ def run_analysis(syllables, model_name, layers, echoframe_store,
         layer_seed = int(rng.integers(0, np.iinfo(np.uint32).max))
         try:
             syllable_population = fetch_syllable_data(syllables, model_name,
-                layer, echoframe_store, collar=collar)
+                layer, echoframe_store, collar=collar, verbose=verbose)
         except ValueError as error:
             failed_layers[str(layer)] = {'seed': layer_seed,
                 'reason': str(error)}

@@ -190,3 +190,7 @@ Syllable position and sonority are structurally related. Position should not
 simply be controlled away as a nuisance variable. Users may instead run
 separate analyses by syllable template or position when that comparison is
 scientifically appropriate.
+
+## License
+
+Released under the MIT License; see [`LICENSE`](./LICENSE).
