@@ -66,6 +66,17 @@ class Corpus:
             [('m', 400, 500), ('l', 500, 600)])
         self.syllables = [self.s1, self.s2, self.s3]
 
+        # A separate 90-syllable population for analyses that enforce the
+        # minimum subset size. Short, non-overlapping phones share the same
+        # stored phrase payload but retain distinct syllable keys.
+        self.ph4 = self._phrase('ph4', 2000, 2400)
+        self.analysis_syllables = []
+        for index in range(90):
+            start = 2000 + 4 * index
+            label = 'a' if index % 2 else 'p'
+            self.analysis_syllables.append(self._syllable(
+                self.ph4, start, start + 4, [(label, start, start + 4)]))
+
         # edge cases: no stored payload for ph3, phones far outside ph1's
         # stored payload (no frames overlap), an unknown label, and a
         # syllable never linked to a phrase
@@ -82,7 +93,7 @@ class Corpus:
         self.phraser_store.save_many(self.segments)
 
     def _store_payloads(self):
-        for phrase_index, phrase in enumerate([self.ph1, self.ph2]):
+        for phrase_index, phrase in enumerate([self.ph1, self.ph2, self.ph4]):
             for layer in LAYERS:
                 key = self.echoframe_store.make_echoframe_key(
                     'hidden_state', model_name=MODEL_NAME,

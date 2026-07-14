@@ -7,6 +7,8 @@ from tqdm import tqdm
 
 from sonority_rsa.rdm import compute_sonority_rsa
 
+MIN_SUBSET_SIZE = 30
+
 
 def sample_syllables(syllable_population, subset_size, rng):
     """
@@ -18,12 +20,15 @@ def sample_syllables(syllable_population, subset_size, rng):
     size subset_size, so a run is fully replayable from the population
     order and the seed (see replay_sampled_keys).
 
-    syllable_population: SyllablePopulation (or sequence of SyllableData)
-    subset_size: number of syllables to sample (<= population size)
+    syllable_population: SyllablePopulation or sequence of SyllableData;
+        a plain sequence is supported for one-off sampling
+    subset_size: number of syllables to sample (at least 30 and no larger
+        than the population size)
     rng: numpy random generator
     """
-    if subset_size <= 0:
-        raise ValueError('subset_size must be positive')
+    if subset_size < MIN_SUBSET_SIZE:
+        raise ValueError(
+            f'subset_size must be at least {MIN_SUBSET_SIZE} syllables')
     if len(syllable_population) == 0:
         raise ValueError('cannot sample from an empty syllable population')
     if subset_size > len(syllable_population):
@@ -43,59 +48,80 @@ def sample_syllables(syllable_population, subset_size, rng):
 
 
 def compute_rsa_scores(syllable_population, subset_size, n_subsets,
-        random_state=None):
+        random_state=None, return_diagnostics=False):
     """
     Compute one RSA score per syllable subset for a fetched population.
 
     Draws n_subsets subsets of subset_size distinct syllables (without
     replacement within a subset) and returns the RSA score of each.
 
-    syllable_population: SyllablePopulation for one layer
+    syllable_population: SyllablePopulation for one layer; required so
+        progress and warning messages can identify the layer
     subset_size: number of syllables per subset
     n_subsets: number of subsets to draw
     random_state: optional integer seed or numpy random generator
+    return_diagnostics: return (scores, diagnostics) when true; diagnostics
+        contains invalid-subset counts and one reason per subset
     """
     if n_subsets <= 0:
         raise ValueError('n_subsets must be positive')
+    if subset_size < MIN_SUBSET_SIZE:
+        raise ValueError(
+            f'subset_size must be at least {MIN_SUBSET_SIZE} syllables')
     if subset_size == len(syllable_population):
+        if n_subsets > 1:
+            raise ValueError(
+                f'layer {syllable_population.layer}: subset_size '
+                f'({subset_size}) equals the population size, so '
+                'n_subsets must be 1')
+    elif subset_size / len(syllable_population) >= 0.5:
         warnings.warn(
-            f'layer {syllable_population.layer}: subset_size ({subset_size}) '
-            'equals the population size, so every subset is the full '
-            'population and all RSA scores will be identical (zero '
-            'across-subset variability); use subset_size < population size',
+            f'layer {syllable_population.layer}: subset_size '
+            f'({subset_size}) is at least 50% of the population '
+            f'({len(syllable_population)}). Subsets are sampled '
+            'independently and may overlap, so draws may have limited '
+            'diversity; consider a larger population or smaller subset size',
             stacklevel=2)
 
     rng = make_rng(random_state)
     scores = []
+    invalid_subsets = {'single_sonority_class': 0,
+        'undefined_vector_distance': 0}
+    invalid_reasons = []
 
     for _ in tqdm(range(n_subsets), desc=f'layer {syllable_population.layer}',
             leave=False):
         vectors, sonority, _ = sample_syllables(syllable_population,
             subset_size, rng)
         if np.ptp(sonority) == 0:
-            # backstop: fetch_syllable_data already rejects a population
-            # with a single sonority class, so a subset with no sonority
-            # variation should be unreachable; guard it rather than emit a
-            # silent NaN from the constant sonority RDM
-            raise ValueError(
-                f'layer {syllable_population.layer}: a sampled subset has a '
-                'single sonority class, so the sonority RDM has no '
-                'variation; this should not occur for a population with '
-                'multiple classes')
-        scores.append(compute_sonority_rsa(vectors, sonority))
+            scores.append(float('nan'))
+            invalid_subsets['single_sonority_class'] += 1
+            invalid_reasons.append('single_sonority_class')
+            continue
+        score = compute_sonority_rsa(vectors, sonority)
+        if np.isnan(score):
+            invalid_subsets['undefined_vector_distance'] += 1
+            invalid_reasons.append('undefined_vector_distance')
+        else:
+            invalid_reasons.append(None)
+        scores.append(score)
 
     n_nan = int(np.isnan(scores).sum())
     if n_nan:
         warnings.warn(
             f'layer {syllable_population.layer}: {n_nan} of {n_subsets} RSA '
-            'scores are NaN (a constant or collinear vector makes '
-            'correlation distance undefined); summarize_rsa_scores will '
-            'ignore them', stacklevel=2)
+            'scores are NaN (a sampled subset may have one sonority class, '
+            'or a constant or collinear vector may make correlation distance '
+            'undefined); summarize_rsa_scores will ignore them',
+            stacklevel=2)
 
+    if return_diagnostics:
+        return scores, {'invalid_subsets': invalid_subsets,
+            'invalid_reasons': invalid_reasons}
     return scores
 
 
-def summarize_rsa_scores(scores_by_layer, ci=95):
+def summarize_rsa_scores(scores_by_layer, ci=0.95):
     """
     Summarize RSA scores per layer.
 
@@ -105,9 +131,16 @@ def summarize_rsa_scores(scores_by_layer, ci=95):
     mean/CI).
 
     scores_by_layer: dict mapping layer to a list of RSA scores
-    ci: percentile confidence interval width
+    ci: confidence level as a fraction, e.g. 0.95 for a 95% interval;
+        values below 0.90 emit a warning
     """
-    alpha = (100 - ci) / 2
+    if not 0 < ci < 1:
+        raise ValueError('ci must be greater than 0 and less than 1')
+    if ci < 0.9:
+        warnings.warn(
+            f'ci ({ci}) is below 0.90; this is an unexpected confidence '
+            'interval level', stacklevel=2)
+    alpha = (1 - ci) / 2
     rows = []
 
     for layer in sorted(scores_by_layer):
@@ -116,9 +149,9 @@ def summarize_rsa_scores(scores_by_layer, ci=95):
         rows.append({
             'layer': layer,
             'mean_rsa': float(np.mean(valid)) if valid.size else float('nan'),
-            'ci_lower': (float(np.percentile(valid, alpha))
+            'ci_lower': (float(np.percentile(valid, 100 * alpha))
                 if valid.size else float('nan')),
-            'ci_upper': (float(np.percentile(valid, 100 - alpha))
+            'ci_upper': (float(np.percentile(valid, 100 * (1 - alpha)))
                 if valid.size else float('nan')),
             'n_subsets': len(rsa),
             'n_subsets_valid': int(valid.size),

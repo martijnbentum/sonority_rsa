@@ -50,25 +50,18 @@ class FakeStore:
 
 
 def toy_syllables():
-    """Four syllables over two phrases, with two stored layers."""
-    return [
-        FakeSyllable('s1', 'ph1', [
-            FakePhone('p', {0: [1.0, 0.0, 0.2], 1: [0.0, 1.0, 0.3]}),
-            FakePhone('a', {0: [0.0, 1.0, 0.9], 1: [1.0, 0.0, 0.6]}),
-        ]),
-        FakeSyllable('s2', 'ph1', [
-            FakePhone('s', {0: [0.8, 0.2, 0.5], 1: [0.2, 0.8, 0.1]}),
-            FakePhone('t', {0: [0.9, 0.1, 0.7], 1: [0.1, 0.9, 0.4]}),
-        ]),
-        FakeSyllable('s3', 'ph2', [
-            FakePhone('m', {0: [0.3, 0.7, 0.1], 1: [0.7, 0.3, 0.8]}),
-            FakePhone('l', {0: [0.2, 0.8, 0.6], 1: [0.8, 0.2, 0.2]}),
-        ]),
-        FakeSyllable('s4', 'ph2', [
-            FakePhone('k', {0: [0.6, 0.4, 0.9], 1: [0.4, 0.6, 0.3]}),
-            FakePhone('r', {0: [0.5, 0.5, 0.2], 1: [0.55, 0.45, 0.7]}),
-        ]),
-    ]
+    """Sixty syllables over two phrases, with two stored layers."""
+    syllables = []
+    for index in range(60):
+        value = index / 60
+        label = 'a' if index % 2 else 'p'
+        phone = FakePhone(label, {
+            0: [value, 1 - value, 0.2 + value / 2],
+            1: [1 - value, value, 0.3 + value / 3],
+        })
+        syllables.append(FakeSyllable(f's{index}',
+            f'ph{1 + index % 2}', [phone]))
+    return syllables
 
 
 if __name__ == '__main__':
@@ -77,7 +70,7 @@ if __name__ == '__main__':
         model_name='wav2vec2',
         layers=[0, 1],
         echoframe_store=FakeStore(),
-        subset_size=3,
+        subset_size=30,
         n_subsets=100,
         random_state=1,
     )

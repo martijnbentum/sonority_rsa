@@ -16,11 +16,11 @@ from sonority_rsa.fetch import fetch_syllable_data
 
 SUMMARY_COLUMNS = ['run_id', 'layer', 'mean_rsa', 'ci_lower', 'ci_upper',
     'n_subsets', 'n_subsets_valid', 'subset_size']
-SCORE_COLUMNS = ['run_id', 'layer', 'subset', 'rsa']
+SCORE_COLUMNS = ['run_id', 'layer', 'subset', 'rsa', 'invalid_reason']
 
 
 def run_analysis(syllables, model_name, layers, echoframe_store,
-        subset_size, n_subsets, collar=500, random_state=42, ci=95,
+        subset_size, n_subsets, collar=500, random_state=42, ci=0.95,
         verbose=False):
     """
     Fetch syllable populations per layer and run subset-sampled RSA.
@@ -36,18 +36,23 @@ def run_analysis(syllables, model_name, layers, echoframe_store,
     fails, so a dropped layer does not shift the seeds of the others.
     Raises ValueError only when every requested layer fails.
 
+    This assumes the same usable syllable population is available for every
+    requested layer. A subset-size validation error is therefore treated as
+    a configuration error for the whole run rather than a failed layer.
+
     syllables: list of phraser Syllable objects with linked phones
     model_name: registered echoframe model name (e.g. 'wav2vec2')
-    layers: list of hidden-state layers to analyze
+    layers: iterable of hidden-state layers to analyze
     echoframe_store: echoframe Store holding the hidden states
     subset_size: number of syllables per subset
     n_subsets: number of subsets to draw
     collar: milliseconds of context stored around the phrase
     random_state: integer master seed (default 42), logged for replay
-    ci: percentile confidence interval width
+    ci: confidence level as a fraction, e.g. 0.95 for a 95% interval
     verbose: print each layer's skip report (off by default; the same
         counts are recorded per layer in the run log regardless)
     """
+    layers = list(layers)
     seed = int(random_state)
     rng = make_rng(seed)
     scores, layer_logs, failed_layers = {}, {}, {}
@@ -62,12 +67,28 @@ def run_analysis(syllables, model_name, layers, echoframe_store,
                 'reason': str(error)}
             warnings.warn(f'layer {layer} dropped: {error}', stacklevel=2)
             continue
-        scores[layer] = compute_rsa_scores(syllable_population, subset_size,
-            n_subsets, random_state=layer_seed)
+        layer_scores, diagnostics = compute_rsa_scores(
+            syllable_population, subset_size, n_subsets,
+            random_state=layer_seed, return_diagnostics=True)
+        if not np.isfinite(layer_scores).any():
+            failed_layers[str(layer)] = {
+                'seed': layer_seed,
+                'reason': 'every sampled subset produced an invalid RSA '
+                    'score',
+                'invalid_subsets': diagnostics['invalid_subsets'],
+                'invalid_reasons': diagnostics['invalid_reasons'],
+            }
+            warnings.warn(
+                f'layer {layer} dropped: every sampled subset produced an '
+                'invalid RSA score', stacklevel=2)
+            continue
+        scores[layer] = layer_scores
         layer_logs[str(layer)] = {
             'seed': layer_seed,
             'n_syllables_in_population': len(syllable_population),
             'skipped': syllable_population.skipped,
+            'invalid_subsets': diagnostics['invalid_subsets'],
+            'invalid_reasons': diagnostics['invalid_reasons'],
             'syllable_keys': [_key_to_text(key)
                 for key in syllable_population.keys],
         }
@@ -98,7 +119,7 @@ def save_analysis(summary, scores, log, out):
     out.mkdir(parents=True, exist_ok=True)
     _write_csv(out / 'summary.csv', SUMMARY_COLUMNS, summary)
     _write_csv(out / 'rsa_scores.csv', SCORE_COLUMNS,
-        _score_rows(scores, log['run_id']))
+        _score_rows(scores, log['run_id'], log['layers']))
     with open(out / 'run_log.json', 'w') as fout:
         json.dump(log, fout, indent=2)
 
@@ -178,18 +199,22 @@ def _key_to_text(key):
     return str(key)
 
 
-def _score_rows(scores, run_id):
+def _score_rows(scores, run_id, layer_logs):
     """
     Flatten per-layer scores into rsa_scores.csv rows.
 
     scores: raw scores per layer from run_analysis
     run_id: run identifier from the run log
+    layer_logs: per-layer log entries, including invalid-score reasons
     """
     rows = []
     for layer in sorted(scores):
-        for subset, rsa in enumerate(scores[layer]):
+        reasons = layer_logs[str(layer)]['invalid_reasons']
+        for subset, (rsa, invalid_reason) in enumerate(zip(scores[layer],
+                reasons)):
             rows.append({'run_id': run_id, 'layer': layer,
-                'subset': subset, 'rsa': rsa})
+                'subset': subset, 'rsa': rsa,
+                'invalid_reason': invalid_reason or ''})
     return rows
 
 

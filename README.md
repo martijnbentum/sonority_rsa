@@ -16,10 +16,14 @@ canonical stores (nothing is duplicated into intermediate files):
 
 Each sample draws a subset of distinct syllables without replacement, so
 every syllable in one sample is unique and no exact-duplicate rows enter
-the RDMs (across samples the same syllable can reappear). This requires
-`subset_size` to be smaller than the layer population. All phone middle
-frames belonging to each sampled syllable are included. For each layer,
-the package builds:
+the RDMs (across samples the same syllable can reappear). `subset_size`
+must be at least 30 and cannot exceed the layer population. Repeated
+full-population draws are rejected: when `subset_size` equals the
+population size, use exactly one subset. Subsets are sampled independently,
+not as disjoint partitions. A warning is emitted when `subset_size` is at
+least 50% of the population, because repeated draws may overlap heavily and
+have limited diversity. All phone middle frames belonging to each sampled
+syllable are included. For each layer, the package builds:
 
 1. a wav2vec/model RDM from hidden-state vectors using correlation distance;
 2. a sonority RDM from phone sonority values using absolute distance.
@@ -28,6 +32,10 @@ The RSA score is the Spearman correlation between the upper triangles of
 those RDMs. Repeating over many samples returns the mean RSA, percentile
 confidence intervals, the raw per-subset scores, and a run log that makes
 every sampled subset replayable.
+
+The `ci` argument is a confidence level expressed as a fraction; its default
+of `0.95` produces a 95% percentile interval. Values below `0.90` are
+accepted with a warning, while values outside `(0, 1)` are rejected.
 
 This analysis tests whether wav2vec frame geometry reflects sonority across
 sampled syllable sets.
@@ -122,6 +130,16 @@ layer whose usable phones all share one sonority class has no variation to
 correlate against, so it is dropped like any other unusable layer (issue
 recorded under `failed_layers`).
 
+The analysis assumes that usable syllables are the same for every requested
+layer. Consequently, an invalid `subset_size` is a configuration error for
+the full run, rather than a reason to drop an individual layer.
+
+Individual sampled subsets that happen to contain one sonority class have
+no sonority-distance variation. Their RSA score is recorded as `NaN` and is
+excluded from the summary; `n_subsets_valid` reports the resulting effective
+sample size. A layer whose subsets are all invalid is dropped and recorded
+under `failed_layers` with its invalid-subset diagnostics.
+
 The fetch and sampling steps are also available separately for
 interactive work:
 
@@ -146,8 +164,8 @@ A self-contained toy run (with fake stores, no LMDB needed) lives in
   (`n_subsets` is the number of subsets drawn; `n_subsets_valid` is how
   many were non-NaN, i.e. the effective sample behind `mean_rsa` and the
   interval)
-- `rsa_scores.csv`: one row per subset with `run_id`, `layer`,
-  `subset`, `rsa`
+- `rsa_scores.csv`: one row per subset with `run_id`, `layer`, `subset`,
+  `rsa`, and `invalid_reason` (blank for valid scores)
 - `run_log.json`: everything needed to trace and replay the run
 
 The `run_id` appears in both CSV files and the log, so results stay
@@ -158,12 +176,12 @@ master seed, which defaults to 42 and can be overridden with
 `random_state`), the echoframe store root, and per layer: the layer seed,
 the skip counts,
 and the population syllable keys in fetched order (bytes keys are hex
-encoded). A layer with no usable data is dropped from `summary` and
-`scores` and recorded instead under the log's `failed_layers` key (its
-seed and the reason); every requested layer still consumes one seed draw,
-so a dropped layer leaves the surviving layers' seeds unchanged. A run in
-which every layer fails raises `ValueError`. Because each subset consumes
-exactly one
+encoded), plus invalid-subset counts and a per-subset reason list. A layer
+with no usable data is dropped from `summary` and `scores` and recorded
+instead under the log's `failed_layers` key (its seed and the reason); every
+requested layer still consumes one seed draw, so a dropped layer leaves the
+surviving layers' seeds unchanged. A run in which every layer fails raises
+`ValueError`. Because each subset consumes exactly one
 `rng.choice(n_population, size=subset_size, replace=False)` draw, the sampled
 syllables of every subset can be recomputed from the log alone:
 
