@@ -65,7 +65,7 @@ def toy_syllables():
 
 
 if __name__ == '__main__':
-    summary, scores, log = run_analysis(
+    summary, results, log = run_analysis(
         toy_syllables(),
         model_name='wav2vec2',
         layers=[0, 1],
@@ -73,6 +73,7 @@ if __name__ == '__main__':
         subset_size=30,
         n_subsets=100,
         random_state=1,
+        compute_random_baseline=True,
     )
-    display_analysis(summary, scores)
-    save_analysis(summary, scores, log, 'results/')
+    display_analysis(summary, results)
+    save_analysis(summary, results, log, 'results/')

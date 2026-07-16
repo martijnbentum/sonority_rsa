@@ -28,6 +28,10 @@ syllable are included. For each layer, the package builds:
 1. a wav2vec/model RDM from hidden-state vectors using correlation distance;
 2. a sonority RDM from phone sonority values using absolute distance.
 
+Optionally, the package also builds an intensity RDM from centered phone
+intensities and reports its RSA plus direct and RDM-level Spearman
+correlations between sonority and intensity.
+
 The RSA score is the Spearman correlation between the upper triangles of
 those RDMs. Repeating over many samples returns the mean RSA, percentile
 confidence intervals, the raw per-subset scores, and a run log that makes
@@ -105,7 +109,7 @@ load_cache()
 store = Store('cache')
 syllables = list(Syllable.objects.filter(...))
 
-summary, scores, log = run_analysis(
+summary, results, log = run_analysis(
     syllables,
     model_name='wav2vec2',
     layers=[3, 7, 11],
@@ -113,10 +117,17 @@ summary, scores, log = run_analysis(
     subset_size=100,
     n_subsets=1000,
     random_state=1,
+    compute_random_baseline=True,
+    compute_intensity_baseline=True,
 )
 
-display_analysis(summary, scores)
-save_analysis(summary, scores, log, 'results/')
+results['rsa'][7]
+results['random_baseline_rsa'][7]
+results['intensity_rsa'][7]
+results['sonority_intensity_correlation'][7]
+results['sonority_intensity_rdm_correlation'][7]
+display_analysis(summary, results)
+save_analysis(summary, results, log, 'results/')
 ```
 
 `run_analysis` fetches each layer's population once (one store read per
@@ -134,6 +145,30 @@ The analysis assumes that usable syllables are the same for every requested
 layer. Consequently, an invalid `subset_size` is a configuration error for
 the full run, rather than a reason to drop an individual layer.
 
+When `compute_random_baseline=True`, every sampled subset produces two paired
+scores: its observed RSA and an RSA after shuffling that subset's sonority
+values once. Both scores reuse the same model RDM. The shuffle uses a separate
+generator whose seed is deterministically derived from the layer seed, so it
+does not change syllable sampling or logged replay. Results are grouped first
+by metric and then by layer; without the flag, `results` contains only the
+`rsa` key.
+
+When `compute_intensity_baseline=True`, the complete audio interval of every
+phone with a usable vector is converted to one RMS-power intensity value:
+`10 * log10(mean(signal ** 2) / 4e-10)`. Values are centered per recording by
+subtracting the mean intensity of all usable phones from that recording.
+This preserves within-recording distances while removing recording-level
+gain offsets. Raw intensities are cached across layers. Each subset adds
+`intensity_rsa`, a direct phone-value Spearman correlation between sonority
+and intensity, and a Spearman correlation between their RDM upper triangles.
+All predictors reuse the same model RDM.
+
+Intensity is evaluated only after a phone passes the embedding checks. A
+missing or unreadable audio file, invalid interval, empty segment, zero-power
+segment, or non-finite value for such a phone aborts the run. The error lists
+the audio filename, phone label, and start/end times. A phone already skipped
+for a missing or invalid vector does not require audio.
+
 Individual sampled subsets that happen to contain one sonority class have
 no sonority-distance variation. Their RSA score is recorded as `NaN` and is
 excluded from the summary; `n_subsets_valid` reports the resulting effective
@@ -141,31 +176,67 @@ sample size. A layer whose subsets are all invalid is dropped and recorded
 under `failed_layers` with its invalid-subset diagnostics.
 
 The fetch and sampling steps are also available separately for
-interactive work:
+interactive work. A single random baseline score can be computed by
+shuffling the observed sonority values while leaving the vectors unchanged;
+the shuffle preserves the sonority class counts and tied-distance structure.
 
 ```python
-from sonority_rsa import fetch_syllable_data, compute_rsa_scores
+import numpy as np
+
+from sonority_rsa import (compute_rsa_scores, compute_sonority_random_baseline,
+    compute_sonority_rsa, fetch_syllable_data, sample_syllables)
 
 population = fetch_syllable_data(syllables, 'wav2vec2', layer=7,
     echoframe_store=store)
 scores = compute_rsa_scores(population, subset_size=100, n_subsets=1000,
     random_state=1)
+
+rng = np.random.default_rng(1)
+vectors, sonority, _ = sample_syllables(population, subset_size=100, rng=rng)
+observed = compute_sonority_rsa(vectors, sonority)
+baseline = compute_sonority_random_baseline(vectors, sonority,
+    random_state=42)
 ```
+
+Phone intensity functions are available separately. `compute_phone_intensity`
+implements the RMS-power measure used by the intensity baseline.
+`compute_praat_intensity` computes a genuine Praat intensity contour over the
+complete recording and returns its energy-domain average for the phone, so
+the two raw measures can be compared directly.
+
+```python
+from sonority_rsa import compute_phone_intensity, compute_praat_intensity
+
+rms_db = compute_phone_intensity(phone)
+praat_db = compute_praat_intensity(phone, minimum_pitch=100)
+```
+
+The Praat implementation uses
+[`praat-parselmouth`](https://parselmouth.readthedocs.io/en/stable/api_reference.html)
+with mean-pressure subtraction enabled and Praat's default contour time step.
 
 A self-contained toy run (with fake stores, no LMDB needed) lives in
 `examples/toy_analysis.py`.
 
 ## Outputs and Traceability
 
-`save_analysis(summary, scores, log, out)` writes one directory per run:
+`save_analysis(summary, results, log, out)` writes one directory per run:
 
 - `summary.csv`: one row per layer with `run_id`, `layer`, `mean_rsa`,
   `ci_lower`, `ci_upper`, `n_subsets`, `n_subsets_valid`, `subset_size`
   (`n_subsets` is the number of subsets drawn; `n_subsets_valid` is how
   many were non-NaN, i.e. the effective sample behind `mean_rsa` and the
-  interval)
+  interval). With the random baseline enabled, it also contains the baseline
+  mean and interval and the mean paired RSA difference and its interval. With
+  the intensity baseline enabled, it contains means and intervals for
+  `intensity_rsa`, `sonority_intensity_correlation`, and
+  `sonority_intensity_rdm_correlation`.
 - `rsa_scores.csv`: one row per subset with `run_id`, `layer`, `subset`,
-  `rsa`, and `invalid_reason` (blank for valid scores)
+  `rsa`, and `invalid_reason` (blank for valid scores). With the random
+  baseline enabled, `random_baseline_rsa` and the paired `rsa_difference`
+  are included. With the intensity baseline enabled, the three intensity
+  metrics and `intensity_invalid_reason` are included; no RSA-minus-intensity
+  difference is reported.
 - `run_log.json`: everything needed to trace and replay the run
 
 The `run_id` appears in both CSV files and the log, so results stay
@@ -173,11 +244,12 @@ traceable when CSV files from several runs are combined.
 
 The run log records the package version, all parameters (including the
 master seed, which defaults to 42 and can be overridden with
-`random_state`), the echoframe store root, and per layer: the layer seed,
-the skip counts,
+`random_state`), whether either optional baseline was enabled, the echoframe
+store root, and per layer: the layer seed, the derived random-baseline seed
+when applicable, the skip counts,
 and the population syllable keys in fetched order (bytes keys are hex
 encoded), plus invalid-subset counts and a per-subset reason list. A layer
-with no usable data is dropped from `summary` and `scores` and recorded
+with no usable data is dropped from `summary` and `results` and recorded
 instead under the log's `failed_layers` key (its seed and the reason); every
 requested layer still consumes one seed draw, so a dropped layer leaves the
 surviving layers' seeds unchanged. A run in which every layer fails raises
@@ -198,6 +270,15 @@ Positive RSA values mean that pairs of phone middle frames that are close in
 sonority tend to be close in wav2vec hidden-state geometry for that layer.
 Values near zero mean little monotonic relationship between the two distance
 structures in the sampled data.
+
+`intensity_rsa` measures whether pairs of phones with similar centered
+intensity also have similar hidden-state geometry. The direct
+sonority/intensity correlation describes whether more sonorous phones tend to
+be more or less intense. The RDM correlation describes whether phone pairs
+that differ in sonority also tend to differ in intensity; it is the more
+direct indicator of overlap between the two RSA predictors. These descriptive
+comparisons do not by themselves estimate unique variance or control
+intensity in the sonority RSA.
 
 The sonority scale is ordinal with six classes (stop, fricative, nasal,
 liquid, glide, vowel), so the sonority RDM contains many tied distances.

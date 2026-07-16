@@ -40,13 +40,16 @@ def sonority_rdm(values):
 
     values: one-dimensional sequence of numeric sonority values
     """
-    values = np.asarray(values, dtype=float)
-    if values.ndim != 1:
-        raise ValueError('sonority values must be one-dimensional')
-    if len(values) < 2:
-        raise ValueError('at least two sonority values are required')
+    return _absolute_distance_rdm(values, 'sonority')
 
-    return np.abs(values[:, None] - values[None, :])
+
+def intensity_rdm(values):
+    """
+    Compute an absolute-distance RDM for intensity values.
+
+    values: one-dimensional sequence of numeric intensity values
+    """
+    return _absolute_distance_rdm(values, 'intensity')
 
 
 def spearman_rsa(model_rdm, predictor_rdm):
@@ -76,3 +79,45 @@ def compute_sonority_rsa(vectors, sonority_values):
     model_rdm = correlation_rdm(vectors)
     predictor_rdm = sonority_rdm(sonority_values)
     return spearman_rsa(model_rdm, predictor_rdm)
+
+
+def compute_intensity_rsa(vectors, intensity_values):
+    """
+    Compute RSA between vector geometry and intensity distances.
+
+    vectors: two-dimensional array of hidden-state vectors
+    intensity_values: one-dimensional sequence of intensity values
+    """
+    model_rdm = correlation_rdm(vectors)
+    predictor_rdm = intensity_rdm(intensity_values)
+    return spearman_rsa(model_rdm, predictor_rdm)
+
+
+def compute_sonority_random_baseline(vectors, sonority_values,
+        random_state=42):
+    """
+    Compute RSA after shuffling the observed sonority values once.
+
+    The shuffle preserves the sonority class counts and tied-distance
+    structure while breaking their alignment with the vectors.
+
+    vectors: two-dimensional array of hidden-state vectors
+    sonority_values: one-dimensional sequence of sonority values
+    random_state: integer seed or numpy random generator (default 42)
+    """
+    if isinstance(random_state, np.random.Generator):
+        rng = random_state
+    else:
+        rng = np.random.default_rng(random_state)
+    shuffled_sonority = rng.permutation(sonority_values)
+    return compute_sonority_rsa(vectors, shuffled_sonority)
+
+
+def _absolute_distance_rdm(values, name):
+    """Compute an absolute-distance RDM for one scalar predictor."""
+    values = np.asarray(values, dtype=float)
+    if values.ndim != 1:
+        raise ValueError(f'{name} values must be one-dimensional')
+    if len(values) < 2:
+        raise ValueError(f'at least two {name} values are required')
+    return np.abs(values[:, None] - values[None, :])

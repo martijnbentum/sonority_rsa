@@ -11,6 +11,7 @@ from contextlib import redirect_stdout
 
 import numpy as np
 import pytest
+import soundfile
 from echoframe import EchoframeMetadata
 from echoframe import Store as EchoframeStore
 from phraser import Store as PhraserStore
@@ -38,6 +39,8 @@ class Corpus:
             self.phraser_store = PhraserStore(
                 path=str(root / 'phraser_lmdb'))
             self.echoframe_store = EchoframeStore(root / 'echoframe')
+        self.audio_filename = root / 'test.wav'
+        self._write_audio()
         self.echoframe_store.register_model(MODEL_NAME)
         self.echoframe_store.attach_phraser_store(SOURCE_ID,
             self.phraser_store)
@@ -52,8 +55,9 @@ class Corpus:
         # overlaps payload rows 0-4 (middle row 2), a 100-200ms phone
         # rows 4-9 (middle row 6), a 200-300ms phone rows 9-14 (middle
         # row 11), and a 300-400ms phone rows 14-19 (middle row 16).
-        self.audio = self.phraser_store.create(Audio, filename='test.wav',
-            save=False)
+        self.audio = self.phraser_store.create(Audio,
+            filename=str(self.audio_filename), sample_rate=16000,
+            duration=3000, n_channels=1, save=False)
         self.segments = []
         self.ph1 = self._phrase('ph1', 0, 400)
         self.ph2 = self._phrase('ph2', 400, 800)
@@ -92,6 +96,15 @@ class Corpus:
                 propagate=False)
         self.phraser_store.save_many(self.segments)
 
+    def _write_audio(self):
+        """Write varying-amplitude speech-like audio for intensity tests."""
+        sample_rate = 16000
+        time = np.arange(3 * sample_rate) / sample_rate
+        envelope = 0.1 + 0.15 * time / time[-1]
+        signal = envelope * np.sin(2 * np.pi * 220 * time)
+        soundfile.write(self.audio_filename, signal, sample_rate,
+            subtype='FLOAT')
+
     def _store_payloads(self):
         for phrase_index, phrase in enumerate([self.ph1, self.ph2, self.ph4]):
             for layer in LAYERS:
@@ -123,7 +136,7 @@ class Corpus:
     def _phone(self, syllable, label, start, end):
         phone = self.phraser_store.create(Phone, label=label, start=start,
             end=end, save=False)
-        phone.add_parent(syllable, update_database=False)
+        phone.add_parent(syllable)
         self.segments.append(phone)
         return phone
 

@@ -3,6 +3,7 @@ import warnings
 import numpy as np
 import pytest
 
+import sonority_rsa.sampling as sampling
 from sonority_rsa.sampling import (compute_rsa_scores, replay_sampled_keys,
     sample_syllables, summarize_rsa_scores)
 from sonority_rsa.fetch import SyllableData, SyllablePopulation
@@ -54,6 +55,32 @@ def test_compute_rsa_scores_is_deterministic_for_a_seed():
     second = compute_rsa_scores(population, 30, 4, random_state=1)
 
     assert first == second
+
+
+def test_random_baseline_reuses_one_model_rdm_per_subset(monkeypatch):
+    population = make_population()
+    for index, syllable in enumerate(population):
+        syllable.intensity = np.array([index, index + 0.5])
+    original = sampling.correlation_rdm
+    calls = []
+
+    def counted_correlation_rdm(vectors):
+        calls.append(vectors)
+        return original(vectors)
+
+    monkeypatch.setattr(sampling, 'correlation_rdm',
+        counted_correlation_rdm)
+
+    results, _ = sampling._compute_rsa_results(population, subset_size=30,
+        n_subsets=4, random_state=1, random_baseline_state=2,
+        compute_intensity_baseline=True)
+
+    assert len(calls) == 4
+    assert len(results['rsa']) == 4
+    assert len(results['random_baseline_rsa']) == 4
+    assert len(results['intensity_rsa']) == 4
+    assert len(results['sonority_intensity_correlation']) == 4
+    assert len(results['sonority_intensity_rdm_correlation']) == 4
 
 
 def test_compute_rsa_scores_warns_on_nan_scores():

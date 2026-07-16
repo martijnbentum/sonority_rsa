@@ -10,17 +10,22 @@ SKIP_REASONS = ['no_phrase', 'no_embedding', 'no_sonority', 'no_frames',
 class SyllableData:
     """Middle-frame vectors and sonority values for one syllable."""
 
-    def __init__(self, key, phone_labels, sonority, vectors):
+    def __init__(self, key, phone_labels, sonority, vectors,
+            phone_segments=None):
         """
         key: phraser syllable key
         phone_labels: phone label per row
         sonority: sonority weight per row
         vectors: middle-frame hidden-state vector per row
+        phone_segments: source phraser Phone per row, when available
         """
         self.key = key
         self.phone_labels = list(phone_labels)
         self.sonority = np.asarray(sonority, dtype=float)
         self.vectors = np.asarray(vectors, dtype=float)
+        self.phone_segments = (list(phone_segments)
+            if phone_segments is not None else [])
+        self.intensity = None
 
     def __repr__(self):
         return (f'SyllableData(key={self.key!r}, '
@@ -160,7 +165,7 @@ def _syllable_data(syllable, embedding, skipped):
     embedding: stored echoframe Embedding for the syllable's phrase
     skipped: counter dict updated in place
     """
-    phone_labels, sonority, vectors = [], [], []
+    phone_labels, sonority, vectors, phone_segments = [], [], [], []
     for phone in syllable.phones:
         weight = phone_sonority(phone)
         if weight is None:
@@ -182,10 +187,12 @@ def _syllable_data(syllable, embedding, skipped):
         phone_labels.append(phone.label)
         sonority.append(weight)
         vectors.append(vector)
+        phone_segments.append(phone)
     if not phone_labels:
         skipped['no_phones'] += 1
         return None
-    return SyllableData(syllable.key, phone_labels, sonority, vectors)
+    return SyllableData(syllable.key, phone_labels, sonority, vectors,
+        phone_segments=phone_segments)
 
 
 def _report_skipped(skipped):

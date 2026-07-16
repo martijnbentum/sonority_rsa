@@ -3,9 +3,11 @@
 import warnings
 
 import numpy as np
+from scipy.stats import spearmanr
 from tqdm import tqdm
 
-from sonority_rsa.rdm import compute_sonority_rsa
+from sonority_rsa.rdm import (correlation_rdm, intensity_rdm, sonority_rdm,
+    spearman_rsa)
 
 MIN_SUBSET_SIZE = 30
 
@@ -26,6 +28,15 @@ def sample_syllables(syllable_population, subset_size, rng):
         than the population size)
     rng: numpy random generator
     """
+    sampled = _draw_syllables(syllable_population, subset_size, rng)
+    vectors = np.concatenate([syllable.vectors for syllable in sampled])
+    sonority = np.concatenate([syllable.sonority for syllable in sampled])
+    keys = [syllable.key for syllable in sampled]
+    return vectors, sonority, keys
+
+
+def _draw_syllables(syllable_population, subset_size, rng):
+    """Draw and return SyllableData objects after validating the sample."""
     if subset_size < MIN_SUBSET_SIZE:
         raise ValueError(
             f'subset_size must be at least {MIN_SUBSET_SIZE} syllables')
@@ -39,12 +50,7 @@ def sample_syllables(syllable_population, subset_size, rng):
 
     indices = rng.choice(len(syllable_population), size=subset_size,
         replace=False)
-    sampled = [syllable_population[int(index)] for index in indices]
-
-    vectors = np.concatenate([syllable.vectors for syllable in sampled])
-    sonority = np.concatenate([syllable.sonority for syllable in sampled])
-    keys = [syllable.key for syllable in sampled]
-    return vectors, sonority, keys
+    return [syllable_population[int(index)] for index in indices]
 
 
 def compute_rsa_scores(syllable_population, subset_size, n_subsets,
@@ -62,6 +68,26 @@ def compute_rsa_scores(syllable_population, subset_size, n_subsets,
     random_state: optional integer seed or numpy random generator
     return_diagnostics: return (scores, diagnostics) when true; diagnostics
         contains invalid-subset counts and one reason per subset
+    """
+    results, diagnostics = _compute_rsa_results(syllable_population,
+        subset_size, n_subsets, random_state=random_state)
+    if return_diagnostics:
+        return results['rsa'], diagnostics
+    return results['rsa']
+
+
+def _compute_rsa_results(syllable_population, subset_size, n_subsets,
+        random_state=None, random_baseline_state=None,
+        compute_intensity_baseline=False):
+    """
+    Compute observed and optionally random-baseline RSA scores.
+
+    random_state controls syllable sampling. random_baseline_state controls
+    one independent sonority shuffle per subset; when it is None, only
+    observed RSA scores are computed. The two generators remain separate so
+    baseline shuffles cannot change the sampled syllables.
+    compute_intensity_baseline adds intensity RSA and sonority/intensity
+    correlations for the same sampled phone rows.
     """
     if n_subsets <= 0:
         raise ValueError('n_subsets must be positive')
@@ -84,29 +110,92 @@ def compute_rsa_scores(syllable_population, subset_size, n_subsets,
             stacklevel=2)
 
     rng = make_rng(random_state)
-    scores = []
+    baseline_rng = (make_rng(random_baseline_state)
+        if random_baseline_state is not None else None)
+    results = {'rsa': []}
+    if baseline_rng is not None:
+        results['random_baseline_rsa'] = []
+    if compute_intensity_baseline:
+        results.update({
+            'intensity_rsa': [],
+            'sonority_intensity_correlation': [],
+            'sonority_intensity_rdm_correlation': [],
+        })
     invalid_subsets = {'single_sonority_class': 0,
         'undefined_vector_distance': 0}
     invalid_reasons = []
+    intensity_invalid_subsets = {'single_intensity_value': 0,
+        'undefined_intensity_rsa': 0}
+    intensity_invalid_reasons = []
 
     for _ in tqdm(range(n_subsets), desc=f'layer {syllable_population.layer}',
             leave=False):
-        vectors, sonority, _ = sample_syllables(syllable_population,
-            subset_size, rng)
+        sampled = _draw_syllables(syllable_population, subset_size, rng)
+        vectors = np.concatenate([s.vectors for s in sampled])
+        sonority = np.concatenate([s.sonority for s in sampled])
+        intensity = None
+        if compute_intensity_baseline:
+            if any(s.intensity is None for s in sampled):
+                raise RuntimeError(
+                    'intensity baseline requested before intensity values '
+                    'were attached to the syllable population')
+            intensity = np.concatenate([s.intensity for s in sampled])
+
+        model_rdm = correlation_rdm(vectors)
+        sonority_predictor_rdm = None
         if np.ptp(sonority) == 0:
-            scores.append(float('nan'))
+            results['rsa'].append(float('nan'))
+            if baseline_rng is not None:
+                results['random_baseline_rsa'].append(float('nan'))
             invalid_subsets['single_sonority_class'] += 1
             invalid_reasons.append('single_sonority_class')
-            continue
-        score = compute_sonority_rsa(vectors, sonority)
-        if np.isnan(score):
-            invalid_subsets['undefined_vector_distance'] += 1
-            invalid_reasons.append('undefined_vector_distance')
         else:
-            invalid_reasons.append(None)
-        scores.append(score)
+            sonority_predictor_rdm = sonority_rdm(sonority)
+            score = spearman_rsa(model_rdm, sonority_predictor_rdm)
+            if np.isnan(score):
+                invalid_subsets['undefined_vector_distance'] += 1
+                invalid_reasons.append('undefined_vector_distance')
+            else:
+                invalid_reasons.append(None)
+            results['rsa'].append(score)
+            if baseline_rng is not None:
+                shuffled = baseline_rng.permutation(sonority)
+                baseline_score = spearman_rsa(model_rdm,
+                    sonority_rdm(shuffled))
+                results['random_baseline_rsa'].append(baseline_score)
 
-    n_nan = int(np.isnan(scores).sum())
+        if compute_intensity_baseline:
+            if np.ptp(intensity) == 0:
+                results['intensity_rsa'].append(float('nan'))
+                results['sonority_intensity_correlation'].append(float('nan'))
+                results['sonority_intensity_rdm_correlation'].append(
+                    float('nan'))
+                intensity_invalid_subsets['single_intensity_value'] += 1
+                intensity_invalid_reasons.append('single_intensity_value')
+                continue
+            intensity_predictor_rdm = intensity_rdm(intensity)
+            intensity_score = spearman_rsa(model_rdm,
+                intensity_predictor_rdm)
+            results['intensity_rsa'].append(intensity_score)
+            if np.isnan(intensity_score):
+                intensity_invalid_subsets['undefined_intensity_rsa'] += 1
+                intensity_invalid_reasons.append('undefined_intensity_rsa')
+            else:
+                intensity_invalid_reasons.append(None)
+
+            if sonority_predictor_rdm is None:
+                value_correlation = float('nan')
+                rdm_correlation = float('nan')
+            else:
+                value_correlation = spearmanr(sonority, intensity).statistic
+                rdm_correlation = spearman_rsa(sonority_predictor_rdm,
+                    intensity_predictor_rdm)
+            results['sonority_intensity_correlation'].append(
+                value_correlation)
+            results['sonority_intensity_rdm_correlation'].append(
+                rdm_correlation)
+
+    n_nan = int(np.isnan(results['rsa']).sum())
     if n_nan:
         warnings.warn(
             f'layer {syllable_population.layer}: {n_nan} of {n_subsets} RSA '
@@ -115,10 +204,14 @@ def compute_rsa_scores(syllable_population, subset_size, n_subsets,
             'undefined); summarize_rsa_scores will ignore them',
             stacklevel=2)
 
-    if return_diagnostics:
-        return scores, {'invalid_subsets': invalid_subsets,
-            'invalid_reasons': invalid_reasons}
-    return scores
+    diagnostics = {'invalid_subsets': invalid_subsets,
+        'invalid_reasons': invalid_reasons}
+    if compute_intensity_baseline:
+        diagnostics.update({
+            'intensity_invalid_subsets': intensity_invalid_subsets,
+            'intensity_invalid_reasons': intensity_invalid_reasons,
+        })
+    return results, diagnostics
 
 
 def summarize_rsa_scores(scores_by_layer, ci=0.95):
@@ -134,12 +227,12 @@ def summarize_rsa_scores(scores_by_layer, ci=0.95):
     ci: confidence level as a fraction, e.g. 0.95 for a 95% interval;
         values below 0.90 emit a warning
     """
-    if not 0 < ci < 1:
-        raise ValueError('ci must be greater than 0 and less than 1')
-    if ci < 0.9:
-        warnings.warn(
-            f'ci ({ci}) is below 0.90; this is an unexpected confidence '
-            'interval level', stacklevel=2)
+    _validate_ci(ci)
+    return _summarize_rsa_scores(scores_by_layer, ci)
+
+
+def _summarize_rsa_scores(scores_by_layer, ci):
+    """Summarize scores after the confidence level has been validated."""
     alpha = (1 - ci) / 2
     rows = []
 
@@ -158,6 +251,16 @@ def summarize_rsa_scores(scores_by_layer, ci=0.95):
         })
 
     return rows
+
+
+def _validate_ci(ci, warn=True):
+    """Validate a fractional confidence level and optionally warn if low."""
+    if not 0 < ci < 1:
+        raise ValueError('ci must be greater than 0 and less than 1')
+    if warn and ci < 0.9:
+        warnings.warn(
+            f'ci ({ci}) is below 0.90; this is an unexpected confidence '
+            'interval level', stacklevel=3)
 
 
 def replay_sampled_keys(syllable_keys, seed, subset_size, n_subsets):

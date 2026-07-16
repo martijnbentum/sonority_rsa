@@ -1,4 +1,4 @@
-"""Subset-sampled RSA for wav2vec phone middle frames and sonority."""
+"""Subset-sampled RSA for phone embeddings, sonority, and intensity."""
 
 from sonority_rsa.analysis import display_analysis
 from sonority_rsa.analysis import log_sampled_keys
@@ -11,18 +11,28 @@ from sonority_rsa.fetch import SyllableData
 from sonority_rsa.fetch import SyllablePopulation
 from sonority_rsa.fetch import fetch_syllable_data
 from sonority_rsa.fetch import phone_sonority
-from sonority_rsa.rdm import (compute_sonority_rsa, correlation_rdm,
-    sonority_rdm, spearman_rsa, upper_triangle)
+from sonority_rsa.intensity import (IntensityComputationError,
+    compute_intensity, compute_phone_intensity, compute_praat_intensity)
+from sonority_rsa.rdm import (compute_intensity_rsa,
+    compute_sonority_random_baseline, compute_sonority_rsa, correlation_rdm,
+    intensity_rdm, sonority_rdm, spearman_rsa, upper_triangle)
 
 __all__ = [
+    'IntensityComputationError',
     'SyllableData',
     'SyllablePopulation',
     'compute_rsa_scores',
+    'compute_intensity',
+    'compute_intensity_rsa',
+    'compute_phone_intensity',
+    'compute_praat_intensity',
+    'compute_sonority_random_baseline',
     'compute_sonority_rsa',
     'correlation_rdm',
     'display_analysis',
     'fetch_syllable_data',
     'log_sampled_keys',
+    'intensity_rdm',
     'phone_sonority',
     'replay_sampled_keys',
     'run_analysis',
