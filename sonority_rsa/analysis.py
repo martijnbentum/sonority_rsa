@@ -27,12 +27,15 @@ SCORE_COLUMNS = ['run_id', 'layer', 'subset', 'rsa', 'invalid_reason']
 RANDOM_BASELINE_SCORE_COLUMNS = ['random_baseline_rsa', 'rsa_difference']
 INTENSITY_RESULT_NAMES = ['intensity_rsa',
     'sonority_intensity_correlation',
-    'sonority_intensity_rdm_correlation']
+    'sonority_intensity_rdm_correlation',
+    'sonority_partial_rsa',
+    'intensity_partial_rsa']
 INTENSITY_SUMMARY_COLUMNS = [column
     for name in INTENSITY_RESULT_NAMES
     for column in [f'mean_{name}', f'{name}_ci_lower', f'{name}_ci_upper']]
+INTENSITY_SUMMARY_COLUMNS.append('n_subsets_partial_valid')
 INTENSITY_SCORE_COLUMNS = INTENSITY_RESULT_NAMES + [
-    'intensity_invalid_reason']
+    'intensity_invalid_reason', 'partial_invalid_reason']
 RANDOM_BASELINE_SALT = 42
 
 
@@ -51,7 +54,8 @@ def run_analysis(syllables, model_name, layers, echoframe_store,
     'random_baseline_rsa', with one shuffled-label score paired to each
     observed score from the same subset. When compute_intensity_baseline is
     true, results also contains intensity RSA and direct/RDM correlations
-    between sonority and centered intensity for each subset.
+    between sonority and centered intensity for each subset, plus partial
+    sonority and intensity RSA scores controlling for the other predictor.
 
     A layer with no usable data (no stored embedding for any phrase, or
     every syllable skipped) is dropped: it is left out of summary and
@@ -77,8 +81,9 @@ def run_analysis(syllables, model_name, layers, echoframe_store,
         counts are recorded per layer in the run log regardless)
     compute_random_baseline: compute one shuffled-sonority RSA score for
         every sampled subset (off by default)
-    compute_intensity_baseline: compute centered-intensity RSA and both
-        sonority/intensity correlations for every subset (off by default)
+    compute_intensity_baseline: compute centered-intensity RSA, both
+        sonority/intensity correlations, and both partial RSA directions
+        for every subset (off by default)
     """
     layers = list(layers)
     _validate_ci(ci, warn=False)
@@ -149,6 +154,10 @@ def run_analysis(syllables, model_name, layers, echoframe_store,
                     diagnostics['intensity_invalid_subsets'],
                 'intensity_invalid_reasons':
                     diagnostics['intensity_invalid_reasons'],
+                'partial_invalid_subsets':
+                    diagnostics['partial_invalid_subsets'],
+                'partial_invalid_reasons':
+                    diagnostics['partial_invalid_reasons'],
             })
 
     if not results['rsa']:
@@ -269,6 +278,13 @@ def _build_log(model_name, layers, echoframe_store, subset_size,
             'subset, intensity RSA and direct/RDM Spearman correlations '
             'with sonority reuse the observed model RDM'
             if compute_intensity_baseline else None),
+        'partial_rsa': (
+            'per subset: average-rank the upper triangles of the model, '
+            'sonority, and intensity RDMs; residualize model and target '
+            'ranks separately against control ranks with an intercept, '
+            'then correlate the residuals; both directions are invalidated '
+            'when either direction is undefined'
+            if compute_intensity_baseline else None),
         'layers': layer_logs,
         'failed_layers': failed_layers,
     }
@@ -341,6 +357,8 @@ def _add_intensity_summary(summary, results, ci):
                 f'{metric}_ci_lower': metric_row['ci_lower'],
                 f'{metric}_ci_upper': metric_row['ci_upper'],
             })
+        row['n_subsets_partial_valid'] = rows_by_metric[
+            'sonority_partial_rsa'][layer]['n_subsets_valid']
 
 
 def _summary_columns(has_baseline, has_intensity):
@@ -379,6 +397,8 @@ def _score_rows(results, run_id, layer_logs):
         reasons = layer_logs[str(layer)]['invalid_reasons']
         intensity_reasons = layer_logs[str(layer)].get(
             'intensity_invalid_reasons')
+        partial_reasons = layer_logs[str(layer)].get(
+            'partial_invalid_reasons')
         for subset, (rsa, invalid_reason) in enumerate(zip(scores[layer],
                 reasons)):
             row = {'run_id': run_id, 'layer': layer,
@@ -393,6 +413,8 @@ def _score_rows(results, run_id, layer_logs):
                     row[metric] = results[metric][layer][subset]
                 row['intensity_invalid_reason'] = (
                     intensity_reasons[subset] or '')
+                row['partial_invalid_reason'] = (
+                    partial_reasons[subset] or '')
             rows.append(row)
     return rows
 

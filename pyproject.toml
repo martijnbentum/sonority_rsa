@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sonority-rsa"
-version = "0.1.13"
+version = "0.1.14"
 description = "Bootstrap RSA for wav2vec phone middle frames and sonority"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -13,6 +13,7 @@ classifiers = [
 ]
 dependencies = [
   "librosa",
+  "matplotlib",
   "numpy",
   "praat-parselmouth",
   "scipy",

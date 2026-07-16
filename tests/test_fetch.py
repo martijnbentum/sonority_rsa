@@ -102,8 +102,11 @@ def test_fetch_raises_when_population_has_one_sonority_class(corpus,
 
 
 def test_phone_sonority_returns_none_for_unknown_labels():
-    vowel = Phone(label='a', start=0, end=100, save=False, store=None)
-    silence = Phone(label='(..)', start=0, end=100, save=False, store=None)
+    identity = {'audio_id': b'a' * 8, 'speaker_id': b's' * 8}
+    vowel = Phone(label='a', start=0, end=100, save=False, store=None,
+        **identity)
+    silence = Phone(label='(..)', start=0, end=100, save=False, store=None,
+        **identity)
 
     assert phone_sonority(vowel) == 5
     assert phone_sonority(silence) is None

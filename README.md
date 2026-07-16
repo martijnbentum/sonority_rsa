@@ -30,7 +30,9 @@ syllable are included. For each layer, the package builds:
 
 Optionally, the package also builds an intensity RDM from centered phone
 intensities and reports its RSA plus direct and RDM-level Spearman
-correlations between sonority and intensity.
+correlations between sonority and intensity. The intensity-enabled analysis
+also reports partial RSA in both directions: model–sonority controlling for
+intensity and model–intensity controlling for sonority.
 
 The RSA score is the Spearman correlation between the upper triangles of
 those RDMs. Repeating over many samples returns the mean RSA, percentile
@@ -103,7 +105,8 @@ store at the phrase level; computing them is a separate step (see
 ```python
 from echoframe import Store
 from phraser import Syllable, load_cache
-from sonority_rsa import display_analysis, run_analysis, save_analysis
+from sonority_rsa import (display_analysis, plot_analysis, run_analysis,
+    save_analysis)
 
 load_cache()
 store = Store('cache')
@@ -126,8 +129,12 @@ results['random_baseline_rsa'][7]
 results['intensity_rsa'][7]
 results['sonority_intensity_correlation'][7]
 results['sonority_intensity_rdm_correlation'][7]
+results['sonority_partial_rsa'][7]
+results['intensity_partial_rsa'][7]
 display_analysis(summary, results)
 save_analysis(summary, results, log, 'results/')
+plot_analysis('results/', title='RSA by model layer')
+plot_analysis('results/', title='RSA by model layer', filetype='.pdf')
 ```
 
 `run_analysis` fetches each layer's population once (one store read per
@@ -161,7 +168,16 @@ This preserves within-recording distances while removing recording-level
 gain offsets. Raw intensities are cached across layers. Each subset adds
 `intensity_rsa`, a direct phone-value Spearman correlation between sonority
 and intensity, and a Spearman correlation between their RDM upper triangles.
-All predictors reuse the same model RDM.
+It also adds `sonority_partial_rsa`, controlling the model–sonority
+association for intensity distances, and `intensity_partial_rsa`, controlling
+the model–intensity association for sonority distances. All predictors reuse
+the same model RDM.
+
+Partial RSA is computed over the three RDM upper triangles. Each triangle is
+average-ranked, the model and target ranks are separately residualized against
+the control ranks with an intercept, and the two residual vectors are
+correlated. If either direction is undefined, both partial scores for that
+subset are recorded as `NaN` and excluded from their summaries.
 
 Intensity is evaluated only after a phone passes the embedding checks. A
 missing or unreadable audio file, invalid interval, empty segment, zero-power
@@ -198,6 +214,9 @@ baseline = compute_sonority_random_baseline(vectors, sonority,
     random_state=42)
 ```
 
+The residualized-rank calculation is also available directly as
+`partial_spearman_rsa(model_rdm, target_rdm, control_rdm)`.
+
 Phone intensity functions are available separately. `compute_phone_intensity`
 implements the RMS-power measure used by the intensity baseline.
 `compute_praat_intensity` computes a genuine Praat intensity contour over the
@@ -230,14 +249,22 @@ A self-contained toy run (with fake stores, no LMDB needed) lives in
   mean and interval and the mean paired RSA difference and its interval. With
   the intensity baseline enabled, it contains means and intervals for
   `intensity_rsa`, `sonority_intensity_correlation`, and
-  `sonority_intensity_rdm_correlation`.
+  `sonority_intensity_rdm_correlation`, plus `sonority_partial_rsa` and
+  `intensity_partial_rsa`. `n_subsets_partial_valid` gives the shared valid
+  subset count for the paired partial results.
 - `rsa_scores.csv`: one row per subset with `run_id`, `layer`, `subset`,
   `rsa`, and `invalid_reason` (blank for valid scores). With the random
   baseline enabled, `random_baseline_rsa` and the paired `rsa_difference`
   are included. With the intensity baseline enabled, the three intensity
-  metrics and `intensity_invalid_reason` are included; no RSA-minus-intensity
-  difference is reported.
+  metrics, both partial RSA metrics, `intensity_invalid_reason`, and
+  `partial_invalid_reason` are included; no RSA-minus-intensity difference is
+  reported.
 - `run_log.json`: everything needed to trace and replay the run
+- `rsa_by_layer.png` or `rsa_by_layer.pdf`: created by
+  `plot_analysis(output_dir, title, filetype='.png')` from the two CSV files.
+  It shows subset-level RSA values together with per-layer means and
+  confidence intervals for sonority, plus intensity, partial RSA, and random
+  baseline series when those optional results are available.
 
 The `run_id` appears in both CSV files and the log, so results stay
 traceable when CSV files from several runs are combined.
@@ -277,8 +304,15 @@ sonority/intensity correlation describes whether more sonorous phones tend to
 be more or less intense. The RDM correlation describes whether phone pairs
 that differ in sonority also tend to differ in intensity; it is the more
 direct indicator of overlap between the two RSA predictors. These descriptive
-comparisons do not by themselves estimate unique variance or control
+comparisons do not by themselves estimate unique association or control
 intensity in the sonority RSA.
+
+`sonority_partial_rsa` asks how much model–sonority rank association remains
+after controlling for intensity distances. `intensity_partial_rsa` asks the
+reverse question after controlling for sonority distances. These are
+descriptive unique rank associations, not proportions of variance explained.
+The package summarizes their repeated-subset distributions and does not report
+ordinary correlation p-values because pairwise RDM cells are dependent.
 
 The sonority scale is ordinal with six classes (stop, fricative, nasal,
 liquid, glide, vowel), so the sonority RDM contains many tied distances.

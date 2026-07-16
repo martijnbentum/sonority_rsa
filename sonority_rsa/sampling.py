@@ -6,10 +6,17 @@ import numpy as np
 from scipy.stats import spearmanr
 from tqdm import tqdm
 
+from sonority_rsa.partial import partial_spearman_rsa
 from sonority_rsa.rdm import (correlation_rdm, intensity_rdm, sonority_rdm,
     spearman_rsa)
 
 MIN_SUBSET_SIZE = 30
+PARTIAL_RESULT_NAMES = ['sonority_partial_rsa', 'intensity_partial_rsa']
+PARTIAL_INVALID_REASONS = [
+    'undefined_sonority_partial_rsa',
+    'undefined_intensity_partial_rsa',
+    'undefined_both_partial_rsa',
+]
 
 
 def sample_syllables(syllable_population, subset_size, rng):
@@ -87,7 +94,9 @@ def _compute_rsa_results(syllable_population, subset_size, n_subsets,
     observed RSA scores are computed. The two generators remain separate so
     baseline shuffles cannot change the sampled syllables.
     compute_intensity_baseline adds intensity RSA and sonority/intensity
-    correlations for the same sampled phone rows.
+    correlations for the same sampled phone rows, plus model–sonority RSA
+    controlling for intensity and model–intensity RSA controlling for
+    sonority.
     """
     if n_subsets <= 0:
         raise ValueError('n_subsets must be positive')
@@ -120,6 +129,8 @@ def _compute_rsa_results(syllable_population, subset_size, n_subsets,
             'intensity_rsa': [],
             'sonority_intensity_correlation': [],
             'sonority_intensity_rdm_correlation': [],
+            'sonority_partial_rsa': [],
+            'intensity_partial_rsa': [],
         })
     invalid_subsets = {'single_sonority_class': 0,
         'undefined_vector_distance': 0}
@@ -127,6 +138,9 @@ def _compute_rsa_results(syllable_population, subset_size, n_subsets,
     intensity_invalid_subsets = {'single_intensity_value': 0,
         'undefined_intensity_rsa': 0}
     intensity_invalid_reasons = []
+    partial_invalid_subsets = {reason: 0
+        for reason in PARTIAL_INVALID_REASONS}
+    partial_invalid_reasons = []
 
     for _ in tqdm(range(n_subsets), desc=f'layer {syllable_population.layer}',
             leave=False):
@@ -170,6 +184,9 @@ def _compute_rsa_results(syllable_population, subset_size, n_subsets,
                 results['sonority_intensity_correlation'].append(float('nan'))
                 results['sonority_intensity_rdm_correlation'].append(
                     float('nan'))
+                _append_invalid_partial_results(results,
+                    partial_invalid_subsets, partial_invalid_reasons,
+                    'undefined_both_partial_rsa')
                 intensity_invalid_subsets['single_intensity_value'] += 1
                 intensity_invalid_reasons.append('single_intensity_value')
                 continue
@@ -194,6 +211,14 @@ def _compute_rsa_results(syllable_population, subset_size, n_subsets,
                 value_correlation)
             results['sonority_intensity_rdm_correlation'].append(
                 rdm_correlation)
+            if sonority_predictor_rdm is None:
+                _append_invalid_partial_results(results,
+                    partial_invalid_subsets, partial_invalid_reasons,
+                    'undefined_both_partial_rsa')
+            else:
+                _append_partial_results(results, model_rdm,
+                    sonority_predictor_rdm, intensity_predictor_rdm,
+                    partial_invalid_subsets, partial_invalid_reasons)
 
     n_nan = int(np.isnan(results['rsa']).sum())
     if n_nan:
@@ -210,8 +235,44 @@ def _compute_rsa_results(syllable_population, subset_size, n_subsets,
         diagnostics.update({
             'intensity_invalid_subsets': intensity_invalid_subsets,
             'intensity_invalid_reasons': intensity_invalid_reasons,
+            'partial_invalid_subsets': partial_invalid_subsets,
+            'partial_invalid_reasons': partial_invalid_reasons,
         })
     return results, diagnostics
+
+
+def _append_partial_results(results, model_rdm, sonority_predictor_rdm,
+        intensity_predictor_rdm, invalid_subsets, invalid_reasons):
+    """Compute paired partial scores and apply paired invalidation."""
+    sonority_score = partial_spearman_rsa(model_rdm,
+        sonority_predictor_rdm, intensity_predictor_rdm)
+    intensity_score = partial_spearman_rsa(model_rdm,
+        intensity_predictor_rdm, sonority_predictor_rdm)
+    sonority_valid = np.isfinite(sonority_score)
+    intensity_valid = np.isfinite(intensity_score)
+    if sonority_valid and intensity_valid:
+        results['sonority_partial_rsa'].append(sonority_score)
+        results['intensity_partial_rsa'].append(intensity_score)
+        invalid_reasons.append(None)
+        return
+
+    if not sonority_valid and not intensity_valid:
+        reason = 'undefined_both_partial_rsa'
+    elif not sonority_valid:
+        reason = 'undefined_sonority_partial_rsa'
+    else:
+        reason = 'undefined_intensity_partial_rsa'
+    _append_invalid_partial_results(results, invalid_subsets,
+        invalid_reasons, reason)
+
+
+def _append_invalid_partial_results(results, invalid_subsets,
+        invalid_reasons, reason):
+    """Append a paired invalid partial-RSA result and its reason."""
+    for metric in PARTIAL_RESULT_NAMES:
+        results[metric].append(float('nan'))
+    invalid_subsets[reason] += 1
+    invalid_reasons.append(reason)
 
 
 def summarize_rsa_scores(scores_by_layer, ci=0.95):

@@ -81,6 +81,31 @@ def test_random_baseline_reuses_one_model_rdm_per_subset(monkeypatch):
     assert len(results['intensity_rsa']) == 4
     assert len(results['sonority_intensity_correlation']) == 4
     assert len(results['sonority_intensity_rdm_correlation']) == 4
+    assert len(results['sonority_partial_rsa']) == 4
+    assert len(results['intensity_partial_rsa']) == 4
+
+
+def test_partial_rsa_invalidates_both_directions(monkeypatch):
+    population = make_population(30)
+    for index, syllable in enumerate(population):
+        syllable.intensity = np.array([index, index + 0.5])
+    scores = iter([0.2, float('nan')])
+    monkeypatch.setattr(sampling, 'partial_spearman_rsa',
+        lambda *args: next(scores))
+
+    results, diagnostics = sampling._compute_rsa_results(population,
+        subset_size=30, n_subsets=1, random_state=1,
+        compute_intensity_baseline=True)
+
+    assert np.isnan(results['sonority_partial_rsa'][0])
+    assert np.isnan(results['intensity_partial_rsa'][0])
+    assert diagnostics['partial_invalid_subsets'] == {
+        'undefined_sonority_partial_rsa': 0,
+        'undefined_intensity_partial_rsa': 1,
+        'undefined_both_partial_rsa': 0,
+    }
+    assert diagnostics['partial_invalid_reasons'] == [
+        'undefined_intensity_partial_rsa']
 
 
 def test_compute_rsa_scores_warns_on_nan_scores():

@@ -15,7 +15,7 @@ import soundfile
 from echoframe import EchoframeMetadata
 from echoframe import Store as EchoframeStore
 from phraser import Store as PhraserStore
-from phraser.models import Audio, Phone, Phrase, Syllable
+from phraser.models import Audio, Phone, Phrase, Speaker, Syllable, Word
 
 MODEL_NAME = 'wav2vec2'
 LAYERS = [0, 1]
@@ -58,6 +58,8 @@ class Corpus:
         self.audio = self.phraser_store.create(Audio,
             filename=str(self.audio_filename), sample_rate=16000,
             duration=3000, n_channels=1, save=False)
+        self.speaker = self.phraser_store.create(Speaker, name='test',
+            save=False)
         self.segments = []
         self.ph1 = self._phrase('ph1', 0, 400)
         self.ph2 = self._phrase('ph2', 400, 800)
@@ -91,10 +93,8 @@ class Corpus:
         self.s_unlinked = self._syllable(None, 1600, 1700,
             [('a', 1600, 1700)])
 
-        for segment in self.segments:
-            segment.add_audio(self.audio, update_database=False,
-                propagate=False)
-        self.phraser_store.save_many(self.segments)
+        self.phraser_store.save_many(
+            [self.audio, self.speaker, *self.segments])
 
     def _write_audio(self):
         """Write varying-amplitude speech-like audio for intensity tests."""
@@ -119,15 +119,22 @@ class Corpus:
 
     def _phrase(self, label, start, end):
         phrase = self.phraser_store.create(Phrase, label=label, start=start,
-            end=end, save=False)
+            end=end, audio_id=self.audio.identifier,
+            speaker_id=self.speaker.identifier, save=False)
         self.segments.append(phrase)
         return phrase
 
     def _syllable(self, phrase, start, end, phones):
         syllable = self.phraser_store.create(Syllable, label='syl',
-            start=start, end=end, save=False)
+            start=start, end=end, audio_id=self.audio.identifier,
+            speaker_id=self.speaker.identifier, save=False)
         if phrase is not None:
-            syllable._add_phrase(phrase, update_database=False)
+            word = self.phraser_store.create(Word, label='word', start=start,
+                end=end, audio_id=self.audio.identifier,
+                speaker_id=self.speaker.identifier, save=False)
+            word.add_parent(phrase)
+            syllable.add_parent(word)
+            self.segments.append(word)
         self.segments.append(syllable)
         for label, phone_start, phone_end in phones:
             self._phone(syllable, label, phone_start, phone_end)
@@ -135,7 +142,8 @@ class Corpus:
 
     def _phone(self, syllable, label, start, end):
         phone = self.phraser_store.create(Phone, label=label, start=start,
-            end=end, save=False)
+            end=end, audio_id=self.audio.identifier,
+            speaker_id=self.speaker.identifier, save=False)
         phone.add_parent(syllable)
         self.segments.append(phone)
         return phone

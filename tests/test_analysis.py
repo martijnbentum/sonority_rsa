@@ -166,6 +166,8 @@ def test_run_analysis_computes_intensity_rsa_and_correlations(corpus):
         'intensity_rsa',
         'sonority_intensity_correlation',
         'sonority_intensity_rdm_correlation',
+        'sonority_partial_rsa',
+        'intensity_partial_rsa',
     ]
     assert log['parameters']['compute_intensity_baseline'] is True
     assert log['intensity_baseline']
@@ -177,6 +179,9 @@ def test_run_analysis_computes_intensity_rsa_and_correlations(corpus):
         assert np.isfinite(row['mean_sonority_intensity_correlation'])
         assert np.isfinite(
             row['mean_sonority_intensity_rdm_correlation'])
+        assert np.isfinite(row['mean_sonority_partial_rsa'])
+        assert np.isfinite(row['mean_intensity_partial_rsa'])
+        assert row['n_subsets_partial_valid'] == 4
     for layer in LAYERS:
         entry = log['layers'][str(layer)]
         assert entry['intensity_invalid_subsets'] == {
@@ -184,6 +189,13 @@ def test_run_analysis_computes_intensity_rsa_and_correlations(corpus):
             'undefined_intensity_rsa': 0,
         }
         assert entry['intensity_invalid_reasons'] == [None] * 4
+        assert entry['partial_invalid_subsets'] == {
+            'undefined_sonority_partial_rsa': 0,
+            'undefined_intensity_partial_rsa': 0,
+            'undefined_both_partial_rsa': 0,
+        }
+        assert entry['partial_invalid_reasons'] == [None] * 4
+    assert 'average-rank' in log['partial_rsa']
 
 
 def test_intensity_baseline_does_not_change_observed_scores(corpus):
@@ -192,6 +204,30 @@ def test_intensity_baseline_does_not_change_observed_scores(corpus):
         compute_intensity_baseline=True)
 
     assert observed_only['rsa'] == with_intensity['rsa']
+
+
+def test_partial_rsa_paired_invalidation_is_saved(corpus, tmp_path,
+        monkeypatch):
+    scores = iter([0.2, float('nan'), 0.3, 0.4])
+    monkeypatch.setattr('sonority_rsa.sampling.partial_spearman_rsa',
+        lambda *args: next(scores))
+
+    summary, results, log = run_toy_analysis(corpus, layers=[0],
+        n_subsets=2, compute_intensity_baseline=True)
+    save_analysis(summary, results, log, tmp_path)
+
+    assert np.isnan(results['sonority_partial_rsa'][0][0])
+    assert np.isnan(results['intensity_partial_rsa'][0][0])
+    assert results['sonority_partial_rsa'][0][1] == 0.3
+    assert results['intensity_partial_rsa'][0][1] == 0.4
+    assert summary[0]['n_subsets_partial_valid'] == 1
+    assert log['layers']['0']['partial_invalid_reasons'] == [
+        'undefined_intensity_partial_rsa', None]
+    with open(tmp_path / 'rsa_scores.csv') as fin:
+        rows = list(csv.DictReader(fin))
+    assert rows[0]['partial_invalid_reason'] == (
+        'undefined_intensity_partial_rsa')
+    assert rows[1]['partial_invalid_reason'] == ''
 
 
 def test_intensity_audio_is_loaded_once_across_layers(corpus, monkeypatch):
@@ -307,10 +343,16 @@ def test_save_analysis_writes_intensity_results(corpus, tmp_path):
     assert summary_rows[0]['mean_intensity_rsa']
     assert summary_rows[0]['mean_sonority_intensity_correlation']
     assert summary_rows[0]['mean_sonority_intensity_rdm_correlation']
+    assert summary_rows[0]['mean_sonority_partial_rsa']
+    assert summary_rows[0]['mean_intensity_partial_rsa']
+    assert summary_rows[0]['n_subsets_partial_valid'] == '4'
     assert score_rows[0]['intensity_rsa']
     assert score_rows[0]['sonority_intensity_correlation']
     assert score_rows[0]['sonority_intensity_rdm_correlation']
+    assert score_rows[0]['sonority_partial_rsa']
+    assert score_rows[0]['intensity_partial_rsa']
     assert score_rows[0]['intensity_invalid_reason'] == ''
+    assert score_rows[0]['partial_invalid_reason'] == ''
     assert 'rsa_intensity_difference' not in score_rows[0]
 
 
@@ -346,3 +388,5 @@ def test_display_analysis_prints_intensity_results(corpus, capsys):
     assert 'layer 1 intensity_rsa:' in output
     assert 'layer 1 sonority_intensity_correlation:' in output
     assert 'layer 1 sonority_intensity_rdm_correlation:' in output
+    assert 'layer 1 sonority_partial_rsa:' in output
+    assert 'layer 1 intensity_partial_rsa:' in output
