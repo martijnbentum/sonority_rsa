@@ -314,6 +314,11 @@ descriptive unique rank associations, not proportions of variance explained.
 The package summarizes their repeated-subset distributions and does not report
 ordinary correlation p-values because pairwise RDM cells are dependent.
 
+See the [partial and multiple-regression RSA interpretation
+guide](docs/INTERPRETING_PARTIAL_AND_MR_RSA.md) for a concise comparison of
+partial correlations, regression coefficients, and incremental explained
+variance.
+
 The sonority scale is ordinal with six classes (stop, fricative, nasal,
 liquid, glide, vowel), so the sonority RDM contains many tied distances.
 Spearman correlation handles ties by midranking; expect the tie structure,
