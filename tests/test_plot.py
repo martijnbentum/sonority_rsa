@@ -103,6 +103,40 @@ def test_plot_analysis_uses_solid_zero_line(tmp_path, monkeypatch):
     assert line_styles == ['-']
 
 
+def test_plot_analysis_computes_mean_and_ci_from_raw_scores(tmp_path,
+        monkeypatch):
+    score_rows = [SCORE_ROWS[2], SCORE_ROWS[0], SCORE_ROWS[3], SCORE_ROWS[1]]
+    write_csv(tmp_path / 'rsa_scores.csv', score_rows)
+    plotted_layers = []
+    plotted_means = []
+    plotted_intervals = []
+    original_plot = matplotlib.axes.Axes.plot
+    original_fill_between = matplotlib.axes.Axes.fill_between
+
+    def record_plot(self, x, y, *args, **kwargs):
+        if kwargs.get('label') == 'Sonority':
+            plotted_layers.extend(x)
+            plotted_means.extend(y)
+        return original_plot(self, x, y, *args, **kwargs)
+
+    def record_fill_between(self, x, lower, upper, *args, **kwargs):
+        plotted_intervals.append((lower, upper))
+        return original_fill_between(self, x, lower, upper, *args, **kwargs)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, 'plot', record_plot)
+    monkeypatch.setattr(matplotlib.axes.Axes, 'fill_between',
+        record_fill_between)
+
+    plot_analysis(tmp_path, 'Raw score statistics', show_plot=False)
+
+    assert plotted_layers == [1, 2]
+    assert plotted_means == pytest.approx([0.2, 0.3])
+    assert plotted_intervals[0][0] == pytest.approx(
+        [-1.07062, -0.97062], abs=1e-5)
+    assert plotted_intervals[0][1] == pytest.approx(
+        [1.47062, 1.57062], abs=1e-5)
+
+
 def test_plot_analyses_saves_side_by_side_panels(tmp_path, monkeypatch):
     first = tmp_path / 'first'
     second = tmp_path / 'second'
@@ -141,23 +175,14 @@ def test_plot_analyses_requires_one_title_per_directory(tmp_path):
         plot_analyses([tmp_path, tmp_path], ['Only one'], show_plot=False)
 
 
-def test_plot_analysis_uses_raw_scores_summary_and_optional_series(tmp_path,
+def test_plot_analysis_uses_raw_scores_and_optional_series(tmp_path,
         monkeypatch):
-    summary_rows = [{
-        **row,
-        'mean_intensity_rsa': 0.15,
-        'intensity_rsa_ci_lower': 0.05,
-        'intensity_rsa_ci_upper': 0.25,
-        'mean_random_baseline_rsa': 0.01,
-        'random_baseline_ci_lower': -0.05,
-        'random_baseline_ci_upper': 0.05,
-    } for row in SUMMARY_ROWS]
     score_rows = [{
         **row,
         'intensity_rsa': 0.15,
         'random_baseline_rsa': 0.01,
     } for row in SCORE_ROWS]
-    write_plot_inputs(tmp_path, summary_rows, score_rows)
+    write_plot_inputs(tmp_path, score_rows=score_rows)
     labels = []
     scatter_values = []
     original_plot = matplotlib.axes.Axes.plot
@@ -186,25 +211,13 @@ def test_plot_analysis_uses_raw_scores_summary_and_optional_series(tmp_path,
 
 
 def test_plot_analysis_uses_dashed_partial_rsa_series(tmp_path, monkeypatch):
-    summary_rows = [{
-        **row,
-        'mean_intensity_rsa': 0.15,
-        'intensity_rsa_ci_lower': 0.05,
-        'intensity_rsa_ci_upper': 0.25,
-        'mean_sonority_partial_rsa': 0.18,
-        'sonority_partial_rsa_ci_lower': 0.08,
-        'sonority_partial_rsa_ci_upper': 0.28,
-        'mean_intensity_partial_rsa': 0.12,
-        'intensity_partial_rsa_ci_lower': 0.02,
-        'intensity_partial_rsa_ci_upper': 0.22,
-    } for row in SUMMARY_ROWS]
     score_rows = [{
         **row,
         'intensity_rsa': 0.15,
         'sonority_partial_rsa': 0.18,
         'intensity_partial_rsa': 0.12,
     } for row in SCORE_ROWS]
-    write_plot_inputs(tmp_path, summary_rows, score_rows)
+    write_plot_inputs(tmp_path, score_rows=score_rows)
     styles = {}
     original_plot = matplotlib.axes.Axes.plot
 
@@ -225,12 +238,14 @@ def test_plot_analysis_uses_dashed_partial_rsa_series(tmp_path, monkeypatch):
     }
 
 
-def test_plot_analysis_rejects_incomplete_optional_series(tmp_path):
+def test_plot_analysis_uses_optional_raw_series_without_summary_values(
+        tmp_path):
     score_rows = [{**row, 'intensity_rsa': 0.1} for row in SCORE_ROWS]
     write_plot_inputs(tmp_path, score_rows=score_rows)
 
-    with pytest.raises(ValueError, match='mean_intensity_rsa'):
-        plot_analysis(tmp_path, 'Incomplete data', show_plot=False)
+    output_path = plot_analysis(tmp_path, 'Raw intensity', show_plot=False)
+
+    assert output_path == tmp_path / PLOT_FILENAME
 
 
 def test_plot_analysis_rejects_unpaired_partial_rsa_series(tmp_path):
@@ -238,5 +253,5 @@ def test_plot_analysis_rejects_unpaired_partial_rsa_series(tmp_path):
         for row in SCORE_ROWS]
     write_plot_inputs(tmp_path, score_rows=score_rows)
 
-    with pytest.raises(ValueError, match='mean_intensity_partial_rsa'):
+    with pytest.raises(ValueError, match='intensity_partial_rsa'):
         plot_analysis(tmp_path, 'Incomplete partial data', show_plot=False)

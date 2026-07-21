@@ -266,11 +266,14 @@ A self-contained toy run (with fake stores, no LMDB needed) lives in
   reported.
 - `run_log.json`: everything needed to trace and replay the run
 - `rsa_by_layer.png` or `rsa_by_layer.pdf`: created by
-  `plot_analysis(output_dir, title, filetype='.png', show_plot=True)` from the
-  two CSV files.
-  It shows subset-level RSA values together with per-layer means and
-  confidence intervals for sonority, plus intensity, partial RSA, and random
-  baseline series when those optional results are available.
+  `plot_analysis(output_dir, title, filetype='.png', show_plot=True)` from
+  `rsa_scores.csv`.
+  It shows finite subset-level values from `rsa_scores.csv` together with
+  their per-layer means and 95% Student's t confidence intervals around the
+  means. These plotting intervals are recomputed from the raw scores; they
+  are distinct from the percentile intervals stored in `summary.csv`.
+  Intensity, partial RSA, and random baseline series are included when those
+  raw-score columns are available.
 - `rsa_by_layer_panels.png` or `rsa_by_layer_panels.pdf`: created by
   `plot_analyses(output_dirs, titles, filetype='.png', show_plot=True)` in the
   parent of the first analysis directory. It shows one analysis per panel and

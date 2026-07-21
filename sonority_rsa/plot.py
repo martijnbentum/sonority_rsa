@@ -1,19 +1,19 @@
-"""Plot saved RSA scores and their per-layer summaries."""
+"""Plot saved RSA scores and their per-layer statistics."""
 
 import csv
 import math
 from pathlib import Path
 
+from sonority_rsa.stats_util import mean_confidence_interval
+
 PLOT_FILENAME = 'rsa_by_layer.png'
 PANELS_PLOT_FILENAME = 'rsa_by_layer_panels.png'
+PLOT_CONFIDENCE = 0.95
 SUPPORTED_FILETYPES = {'png', 'pdf'}
 SERIES = [
     {
         'label': 'Sonority',
         'score': 'rsa',
-        'mean': 'mean_rsa',
-        'lower': 'ci_lower',
-        'upper': 'ci_upper',
         'color': 'C0',
         'linestyle': '-',
         'marker': 'o',
@@ -21,9 +21,6 @@ SERIES = [
     {
         'label': 'Sonority (controlling intensity)',
         'score': 'sonority_partial_rsa',
-        'mean': 'mean_sonority_partial_rsa',
-        'lower': 'sonority_partial_rsa_ci_lower',
-        'upper': 'sonority_partial_rsa_ci_upper',
         'color': 'C0',
         'linestyle': '--',
         'marker': 's',
@@ -31,9 +28,6 @@ SERIES = [
     {
         'label': 'Intensity',
         'score': 'intensity_rsa',
-        'mean': 'mean_intensity_rsa',
-        'lower': 'intensity_rsa_ci_lower',
-        'upper': 'intensity_rsa_ci_upper',
         'color': 'C1',
         'linestyle': '-',
         'marker': 'o',
@@ -41,9 +35,6 @@ SERIES = [
     {
         'label': 'Intensity (controlling sonority)',
         'score': 'intensity_partial_rsa',
-        'mean': 'mean_intensity_partial_rsa',
-        'lower': 'intensity_partial_rsa_ci_lower',
-        'upper': 'intensity_partial_rsa_ci_upper',
         'color': 'C1',
         'linestyle': '--',
         'marker': 's',
@@ -51,9 +42,6 @@ SERIES = [
     {
         'label': 'Random baseline',
         'score': 'random_baseline_rsa',
-        'mean': 'mean_random_baseline_rsa',
-        'lower': 'random_baseline_ci_lower',
-        'upper': 'random_baseline_ci_upper',
         'color': 'C2',
         'linestyle': '-',
         'marker': 'o',
@@ -66,12 +54,12 @@ def plot_analysis(output_dir, title, filetype='.png', show_plot=True):
     """
     Plot RSA by layer from a saved analysis directory.
 
-    The subset-level values in ``rsa_scores.csv`` are shown as translucent
-    points. The means and confidence intervals in ``summary.csv`` are shown
-    as lines and shaded bands. Intensity and random-baseline RSA are added
-    when their columns are available. Partial sonority and intensity RSA
-    are shown as dashed lines when an intensity-enabled analysis includes
-    them.
+    The finite subset-level values in ``rsa_scores.csv`` are shown as
+    translucent points and used to compute the mean lines and shaded 95%
+    Student's t confidence intervals around those means. Intensity and
+    random-baseline RSA are added when their raw-score columns are available.
+    Partial sonority and intensity RSA are shown as dashed lines when an
+    intensity-enabled analysis includes them.
 
     output_dir: directory written by save_analysis
     title: plot title
@@ -140,16 +128,16 @@ def plot_analyses(output_dirs, titles, filetype='.png', show_plot=True):
 def _plot_analysis_on_ax(ax, output_dir, title, show_legend=True,
         legend_location=None):
     """Plot one saved analysis on an existing Matplotlib axes."""
-    summary_path = output_dir / 'summary.csv'
     scores_path = output_dir / 'rsa_scores.csv'
-    summary_columns, summary_rows = _read_csv(summary_path)
     score_columns, score_rows = _read_csv(scores_path)
-    active_series = _active_series(summary_columns, score_columns,
-        summary_path, scores_path)
-    layers = _summary_layers(summary_rows, summary_path)
+    active_series = _active_series(score_columns, scores_path)
+    layers = _layers_from_score_rows(score_rows, scores_path)
+    values_by_series = _series_values_by_layer(score_rows, active_series,
+        scores_path)
 
-    _plot_raw_scores(ax, layers, score_rows, active_series, scores_path)
-    _plot_summaries(ax, layers, summary_rows, active_series, summary_path)
+    _plot_raw_scores(ax, layers, active_series, values_by_series)
+    _plot_mean_confidence_intervals(ax, layers, active_series,
+        values_by_series)
     ax.axhline(0, color='0.4', linewidth=0.8, linestyle='-')
     ax.set_title(str(title))
     ax.set_xlabel('Layer')
@@ -200,33 +188,20 @@ def _read_csv(path):
         return columns, list(reader)
 
 
-def _active_series(summary_columns, score_columns, summary_path,
-        scores_path):
-    """Validate required fields and select optional plot series."""
-    partial_summary_fields = {field
-        for series in PARTIAL_SERIES
-        for field in (series['mean'], series['lower'], series['upper'])}
+def _active_series(score_columns, scores_path):
+    """Validate raw-score fields and select optional plot series."""
     partial_score_fields = {series['score'] for series in PARTIAL_SERIES}
-    has_partial = (bool(partial_summary_fields & summary_columns)
-        or bool(partial_score_fields & score_columns))
+    has_partial = bool(partial_score_fields & score_columns)
     if has_partial:
-        _require_columns(summary_columns,
-            {'layer'} | partial_summary_fields, summary_path)
         _require_columns(score_columns, {'layer'} | partial_score_fields,
             scores_path)
 
     active = []
     for index, series in enumerate(SERIES):
-        summary_fields = {series['mean'], series['lower'], series['upper']}
-        score_fields = {series['score']}
-        is_present = (index == 0
-            or bool(summary_fields & summary_columns)
-            or bool(score_fields & score_columns))
+        is_present = index == 0 or series['score'] in score_columns
         if not is_present:
             continue
-        _require_columns(summary_columns, {'layer'} | summary_fields,
-            summary_path)
-        _require_columns(score_columns, {'layer'} | score_fields,
+        _require_columns(score_columns, {'layer', series['score']},
             scores_path)
         active.append(series)
     return active
@@ -240,54 +215,56 @@ def _require_columns(columns, required, path):
             f'{", ".join(missing)}')
 
 
-def _summary_layers(rows, path):
-    """Read, validate, and numerically sort summary layer values."""
+def _layers_from_score_rows(rows, path):
+    """Return the unique, numerically sorted layers in raw score rows."""
     if not rows:
         raise ValueError(f'{path} contains no data rows')
-    layers = []
-    seen = set()
+    labels_by_value = {}
     for row in rows:
         value = _float_value(row['layer'], 'layer', path)
-        if value in seen:
-            raise ValueError(f'{path} contains duplicate layer {row["layer"]}')
-        seen.add(value)
-        layers.append({'value': value, 'label': row['layer']})
+        labels_by_value.setdefault(value, row['layer'])
+    layers = [{'value': value, 'label': label}
+        for value, label in labels_by_value.items()]
     return sorted(layers, key=lambda layer: layer['value'])
 
 
-def _plot_raw_scores(ax, layers, rows, active_series, path):
-    """Plot finite per-subset RSA values as translucent points."""
-    values_by_layer = {}
+def _series_values_by_layer(rows, active_series, path):
+    """Parse finite raw scores into a per-series, per-layer mapping."""
+    values_by_series = {series['score']: {} for series in active_series}
     for row in rows:
         layer = _float_value(row['layer'], 'layer', path)
-        values_by_layer.setdefault(layer, []).append(row)
+        for series in active_series:
+            score = series['score']
+            value = _optional_float(row[score], score, path)
+            if value is not None:
+                values_by_series[score].setdefault(layer, []).append(value)
+    return values_by_series
 
+
+def _plot_raw_scores(ax, layers, active_series, values_by_series):
+    """Plot finite per-subset RSA values as translucent points."""
     offsets = _series_offsets(layers, len(active_series))
     for series, offset in zip(active_series, offsets):
         for layer in layers:
-            values = [_optional_float(row[series['score']], series['score'],
-                path) for row in values_by_layer.get(layer['value'], [])]
-            values = [value for value in values if value is not None]
+            values = values_by_series[series['score']].get(
+                layer['value'], [])
             if values:
                 ax.scatter([layer['value'] + offset] * len(values), values,
                     color=series['color'], alpha=0.18, s=16,
                     edgecolors='none')
 
 
-def _plot_summaries(ax, layers, rows, active_series, path):
-    """Plot per-layer means and confidence intervals."""
-    rows_by_layer = {
-        _float_value(row['layer'], 'layer', path): row
-        for row in rows
-    }
+def _plot_mean_confidence_intervals(ax, layers, active_series,
+        values_by_series):
+    """Plot raw-score means and 95% confidence intervals around the means."""
     x_values = [layer['value'] for layer in layers]
     for series in active_series:
-        means = [_number_value(rows_by_layer[layer][series['mean']],
-            series['mean'], path) for layer in x_values]
-        lower = [_number_value(rows_by_layer[layer][series['lower']],
-            series['lower'], path) for layer in x_values]
-        upper = [_number_value(rows_by_layer[layer][series['upper']],
-            series['upper'], path) for layer in x_values]
+        statistics = [mean_confidence_interval(
+            values_by_series[series['score']].get(layer, []),
+            confidence=PLOT_CONFIDENCE) for layer in x_values]
+        means = [statistic[0] for statistic in statistics]
+        lower = [statistic[1] for statistic in statistics]
+        upper = [statistic[2] for statistic in statistics]
         ax.fill_between(x_values, lower, upper, color=series['color'],
             alpha=0.14)
         ax.plot(x_values, means, color=series['color'],
@@ -318,15 +295,6 @@ def _float_value(value, column, path):
     if not math.isfinite(number):
         raise ValueError(f'{path} has non-finite {column} value: {value!r}')
     return number
-
-
-def _number_value(value, column, path):
-    """Parse one required numeric CSV cell, including a legitimate NaN."""
-    try:
-        return float(value)
-    except (TypeError, ValueError) as error:
-        raise ValueError(f'{path} has invalid {column} value: {value!r}') \
-            from error
 
 
 def _optional_float(value, column, path):
