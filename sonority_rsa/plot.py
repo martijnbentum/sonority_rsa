@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 
 PLOT_FILENAME = 'rsa_by_layer.png'
+PANELS_PLOT_FILENAME = 'rsa_by_layer_panels.png'
 SUPPORTED_FILETYPES = {'png', 'pdf'}
 SERIES = [
     {
@@ -61,7 +62,7 @@ SERIES = [
 PARTIAL_SERIES = [SERIES[1], SERIES[3]]
 
 
-def plot_analysis(output_dir, title, filetype='.png'):
+def plot_analysis(output_dir, title, filetype='.png', show_plot=True):
     """
     Plot RSA by layer from a saved analysis directory.
 
@@ -75,14 +76,66 @@ def plot_analysis(output_dir, title, filetype='.png'):
     output_dir: directory written by save_analysis
     title: plot title
     filetype: output format, ``.png`` or ``.pdf`` (default ``.png``)
+    show_plot: enable Matplotlib interactive mode and show the figure
 
     Returns the path to ``rsa_by_layer.<filetype>`` in output_dir.
     """
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from matplotlib.figure import Figure
+    from matplotlib import pyplot as plt
 
     output_dir = Path(output_dir)
     extension = _file_extension(filetype)
+    fig, ax = plt.subplots(figsize=(9, 5.5))
+    try:
+        _plot_analysis_on_ax(ax, output_dir, title)
+        fig.tight_layout()
+        output_path = output_dir / f'rsa_by_layer.{extension}'
+        fig.savefig(output_path, dpi=300, bbox_inches='tight')
+    except Exception:
+        plt.close(fig)
+        raise
+    _show_figure(plt, fig, show_plot)
+    return output_path
+
+
+def plot_analyses(output_dirs, titles, filetype='.png', show_plot=True):
+    """
+    Plot saved analyses as panels in one side-by-side figure.
+
+    output_dirs: directories written by save_analysis, one per panel
+    titles: panel titles in the same order as output_dirs
+    filetype: shared output format, ``.png`` or ``.pdf`` (default ``.png``)
+    show_plot: enable Matplotlib interactive mode and show the figure
+
+    The combined figure is saved as ``rsa_by_layer_panels.<filetype>`` in
+    the parent directory of the first analysis directory. Returns that path.
+    """
+    from matplotlib import pyplot as plt
+
+    output_dirs = _panel_values(output_dirs, 'output_dirs')
+    titles = _panel_values(titles, 'titles')
+    if len(output_dirs) != len(titles):
+        raise ValueError('output_dirs and titles must have the same length')
+
+    extension = _file_extension(filetype)
+    figure_width = max(6 * len(output_dirs), 9)
+    fig, axes = plt.subplots(1, len(output_dirs),
+        figsize=(figure_width, 5.5), squeeze=False, sharey=True)
+    try:
+        for ax, output_dir, title in zip(axes[0], output_dirs, titles):
+            _plot_analysis_on_ax(ax, Path(output_dir), title)
+        fig.tight_layout()
+        output_path = (Path(output_dirs[0]).parent
+            / f'rsa_by_layer_panels.{extension}')
+        fig.savefig(output_path, dpi=300, bbox_inches='tight')
+    except Exception:
+        plt.close(fig)
+        raise
+    _show_figure(plt, fig, show_plot)
+    return output_path
+
+
+def _plot_analysis_on_ax(ax, output_dir, title):
+    """Plot one saved analysis on an existing Matplotlib axes."""
     summary_path = output_dir / 'summary.csv'
     scores_path = output_dir / 'rsa_scores.csv'
     summary_columns, summary_rows = _read_csv(summary_path)
@@ -91,12 +144,9 @@ def plot_analysis(output_dir, title, filetype='.png'):
         summary_path, scores_path)
     layers = _summary_layers(summary_rows, summary_path)
 
-    fig = Figure(figsize=(9, 5.5))
-    FigureCanvasAgg(fig)
-    ax = fig.subplots()
     _plot_raw_scores(ax, layers, score_rows, active_series, scores_path)
     _plot_summaries(ax, layers, summary_rows, active_series, summary_path)
-    ax.axhline(0, color='0.4', linewidth=0.8, linestyle='--')
+    ax.axhline(0, color='0.4', linewidth=0.8, linestyle='-')
     ax.set_title(str(title))
     ax.set_xlabel('Layer')
     ax.set_ylabel('RSA value')
@@ -104,11 +154,25 @@ def plot_analysis(output_dir, title, filetype='.png'):
         [layer['label'] for layer in layers])
     ax.grid(axis='y', alpha=0.25)
     ax.legend()
-    fig.tight_layout()
 
-    output_path = output_dir / f'rsa_by_layer.{extension}'
-    fig.savefig(output_path, dpi=300, bbox_inches='tight')
-    return output_path
+
+def _panel_values(values, name):
+    """Return a non-empty panel argument list and reject scalar strings."""
+    if isinstance(values, (str, Path)):
+        raise TypeError(f'{name} must be a sequence, not a single value')
+    values = list(values)
+    if not values:
+        raise ValueError(f'{name} must contain at least one value')
+    return values
+
+
+def _show_figure(plt, fig, show_plot):
+    """Show a figure interactively, or close it when display is suppressed."""
+    if show_plot:
+        plt.ion()
+        plt.show(block=False)
+    else:
+        plt.close(fig)
 
 
 def _file_extension(filetype):
