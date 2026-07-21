@@ -31,6 +31,13 @@ def test_run_analysis_returns_summary_results_and_log(corpus):
     assert sorted(results['rsa']) == LAYERS
     assert all(len(layer_scores) == 4
         for layer_scores in results['rsa'].values())
+    for row in summary:
+        raw_scores = np.asarray(results['rsa'][row['layer']])
+        assert row['rsa_mean'] == pytest.approx(np.mean(raw_scores))
+        assert row['rsa_sd'] == pytest.approx(np.std(raw_scores, ddof=1))
+        assert row['rsa_sem'] == pytest.approx(
+            np.std(raw_scores, ddof=1) / np.sqrt(raw_scores.size))
+        assert row['rsa_n_valid'] == raw_scores.size
 
 
 def test_run_analysis_logs_population_and_seeds(corpus):
@@ -39,18 +46,23 @@ def test_run_analysis_logs_population_and_seeds(corpus):
     expected_keys = [syllable.key.hex()
         for syllable in corpus.analysis_syllables]
     assert log['parameters']['seed'] == 1
+    assert log['parameters']['confidence_level'] == 0.95
+    assert log['parameters']['interval_method'] == 'student_t_mean'
     assert log['parameters']['model_name'] == MODEL_NAME
     assert log['echoframe_store'] == str(corpus.echoframe_store.root)
     for layer in LAYERS:
         entry = log['layers'][str(layer)]
         assert entry['syllable_keys'] == expected_keys
         assert entry['n_syllables_in_population'] == 90
+        assert entry['n_unique_syllable_keys'] == 90
         assert entry['invalid_subsets'] == {
             'single_sonority_class': 0,
             'undefined_vector_distance': 0,
         }
         assert entry['invalid_reasons'] == [None] * 4
-        assert isinstance(entry['seed'], int)
+        assert entry['seed'] == 1
+    assert log_sampled_keys(log, LAYERS[0]) == log_sampled_keys(
+        log, LAYERS[1])
 
 
 def test_run_analysis_logs_generator_layers(corpus):
@@ -100,7 +112,42 @@ def test_run_analysis_rejects_invalid_confidence_level_before_fetch(corpus,
         lambda *args, **kwargs: pytest.fail('fetch should not be called'))
 
     with pytest.raises(ValueError, match='greater than 0 and less than 1'):
-        run_toy_analysis(corpus, ci=1)
+        run_toy_analysis(corpus, confidence=1)
+
+
+def test_run_analysis_rejects_duplicate_input_before_fetch(corpus,
+        monkeypatch):
+    monkeypatch.setattr('sonority_rsa.analysis.fetch_syllable_data',
+        lambda *args, **kwargs: pytest.fail('fetch should not be called'))
+    syllables = [corpus.analysis_syllables[0],
+        *corpus.analysis_syllables]
+
+    with pytest.raises(ValueError, match=(
+            '91 entries but only 90 unique syllable keys')):
+        run_analysis(syllables, MODEL_NAME, LAYERS,
+            corpus.echoframe_store, subset_size=30, n_subsets=1)
+
+
+def test_run_analysis_rejects_different_layer_population_order(corpus,
+        monkeypatch):
+    rng = np.random.default_rng(0)
+    syllables = [
+        SyllableData(f's{index}', ['a'], [index % 2], rng.normal(size=(1, 4)))
+        for index in range(30)
+    ]
+
+    def fetch_for_layer(unused_syllables, model_name, layer, *args,
+            **kwargs):
+        layer_syllables = syllables if layer == 0 else list(reversed(syllables))
+        return SyllablePopulation(model_name, layer, 500, layer_syllables,
+            skipped={})
+
+    monkeypatch.setattr('sonority_rsa.analysis.fetch_syllable_data',
+        fetch_for_layer)
+
+    with pytest.raises(ValueError, match=(
+            'layer 1 syllable population keys or order differ from layer 0')):
+        run_toy_analysis(corpus, layers=[0, 1], n_subsets=1)
 
 
 def test_run_analysis_defaults_seed_to_42(corpus):
@@ -133,10 +180,12 @@ def test_run_analysis_computes_paired_random_baseline(corpus):
         row = next(row for row in summary if row['layer'] == layer)
         assert isinstance(log['layers'][str(layer)]['random_baseline_seed'],
             int)
-        assert row['mean_random_baseline_rsa'] == pytest.approx(
+        assert row['random_baseline_rsa_mean'] == pytest.approx(
             np.mean(baseline))
-        assert row['mean_rsa_difference'] == pytest.approx(
+        assert row['rsa_difference_mean'] == pytest.approx(
             np.mean(observed - baseline))
+    assert (log['layers']['0']['random_baseline_seed']
+        == log['layers']['1']['random_baseline_seed'])
 
 
 def test_random_baseline_does_not_change_observed_scores_or_draws(corpus):
@@ -175,13 +224,14 @@ def test_run_analysis_computes_intensity_rsa_and_correlations(corpus):
         assert sorted(results[metric]) == LAYERS
         assert all(len(scores) == 4 for scores in results[metric].values())
     for row in summary:
-        assert np.isfinite(row['mean_intensity_rsa'])
-        assert np.isfinite(row['mean_sonority_intensity_correlation'])
+        assert np.isfinite(row['intensity_rsa_mean'])
+        assert np.isfinite(row['sonority_intensity_correlation_mean'])
         assert np.isfinite(
-            row['mean_sonority_intensity_rdm_correlation'])
-        assert np.isfinite(row['mean_sonority_partial_rsa'])
-        assert np.isfinite(row['mean_intensity_partial_rsa'])
-        assert row['n_subsets_partial_valid'] == 4
+            row['sonority_intensity_rdm_correlation_mean'])
+        assert np.isfinite(row['sonority_partial_rsa_mean'])
+        assert np.isfinite(row['intensity_partial_rsa_mean'])
+        for metric in results:
+            assert row[f'{metric}_n_valid'] == 4
     for layer in LAYERS:
         entry = log['layers'][str(layer)]
         assert entry['intensity_invalid_subsets'] == {
@@ -220,7 +270,8 @@ def test_partial_rsa_paired_invalidation_is_saved(corpus, tmp_path,
     assert np.isnan(results['intensity_partial_rsa'][0][0])
     assert results['sonority_partial_rsa'][0][1] == 0.3
     assert results['intensity_partial_rsa'][0][1] == 0.4
-    assert summary[0]['n_subsets_partial_valid'] == 1
+    assert summary[0]['sonority_partial_rsa_n_valid'] == 1
+    assert summary[0]['intensity_partial_rsa_n_valid'] == 1
     assert log['layers']['0']['partial_invalid_reasons'] == [
         'undefined_intensity_partial_rsa', None]
     with open(tmp_path / 'rsa_scores.csv') as fin:
@@ -314,6 +365,21 @@ def test_save_analysis_writes_results_and_log(corpus, tmp_path):
     assert draws == log_sampled_keys(log, layer=1)
 
 
+def test_save_analysis_requires_overwrite_for_existing_outputs(corpus,
+        tmp_path):
+    summary, results, log = run_toy_analysis(corpus)
+    save_analysis(summary, results, log, tmp_path)
+
+    with pytest.raises(FileExistsError, match='overwrite=True'):
+        save_analysis(summary, results, log, tmp_path)
+
+    replacement_log = {**log, 'run_id': 'replacement-run'}
+    save_analysis(summary, results, replacement_log, tmp_path,
+        overwrite=True)
+    with open(tmp_path / 'run_log.json') as fin:
+        assert json.load(fin)['run_id'] == 'replacement-run'
+
+
 def test_save_analysis_writes_random_baseline_results(corpus, tmp_path):
     summary, results, log = run_toy_analysis(corpus,
         compute_random_baseline=True)
@@ -324,8 +390,8 @@ def test_save_analysis_writes_random_baseline_results(corpus, tmp_path):
         summary_rows = list(csv.DictReader(fin))
     with open(tmp_path / 'rsa_scores.csv') as fin:
         score_rows = list(csv.DictReader(fin))
-    assert summary_rows[0]['mean_random_baseline_rsa']
-    assert summary_rows[0]['mean_rsa_difference']
+    assert summary_rows[0]['random_baseline_rsa_mean']
+    assert summary_rows[0]['rsa_difference_mean']
     assert score_rows[0]['random_baseline_rsa']
     assert score_rows[0]['rsa_difference']
 
@@ -340,12 +406,13 @@ def test_save_analysis_writes_intensity_results(corpus, tmp_path):
         summary_rows = list(csv.DictReader(fin))
     with open(tmp_path / 'rsa_scores.csv') as fin:
         score_rows = list(csv.DictReader(fin))
-    assert summary_rows[0]['mean_intensity_rsa']
-    assert summary_rows[0]['mean_sonority_intensity_correlation']
-    assert summary_rows[0]['mean_sonority_intensity_rdm_correlation']
-    assert summary_rows[0]['mean_sonority_partial_rsa']
-    assert summary_rows[0]['mean_intensity_partial_rsa']
-    assert summary_rows[0]['n_subsets_partial_valid'] == '4'
+    assert summary_rows[0]['intensity_rsa_mean']
+    assert summary_rows[0]['sonority_intensity_correlation_mean']
+    assert summary_rows[0]['sonority_intensity_rdm_correlation_mean']
+    assert summary_rows[0]['sonority_partial_rsa_mean']
+    assert summary_rows[0]['intensity_partial_rsa_mean']
+    assert summary_rows[0]['sonority_partial_rsa_n_valid'] == '4'
+    assert summary_rows[0]['intensity_partial_rsa_n_valid'] == '4'
     assert score_rows[0]['intensity_rsa']
     assert score_rows[0]['sonority_intensity_correlation']
     assert score_rows[0]['sonority_intensity_rdm_correlation']
@@ -362,7 +429,7 @@ def test_display_analysis_prints_summary(corpus, capsys):
     display_analysis(summary, results, n=2)
 
     output = capsys.readouterr().out
-    assert 'mean_rsa' in output
+    assert 'rsa_mean' in output
     assert 'layer 1 rsa:' in output
 
 
@@ -373,7 +440,7 @@ def test_display_analysis_prints_random_baseline(corpus, capsys):
     display_analysis(summary, results, n=2)
 
     output = capsys.readouterr().out
-    assert 'mean_random_baseline_rsa' in output
+    assert 'random_baseline_rsa_mean' in output
     assert 'layer 1 random_baseline_rsa:' in output
 
 
@@ -384,7 +451,7 @@ def test_display_analysis_prints_intensity_results(corpus, capsys):
     display_analysis(summary, results, n=2)
 
     output = capsys.readouterr().out
-    assert 'mean_intensity_rsa' in output
+    assert 'intensity_rsa_mean' in output
     assert 'layer 1 intensity_rsa:' in output
     assert 'layer 1 sonority_intensity_correlation:' in output
     assert 'layer 1 sonority_intensity_rdm_correlation:' in output

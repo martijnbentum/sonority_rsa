@@ -9,6 +9,7 @@ from tqdm import tqdm
 from sonority_rsa.partial import partial_spearman_rsa
 from sonority_rsa.rdm import (correlation_rdm, intensity_rdm, sonority_rdm,
     spearman_rsa)
+from sonority_rsa.util_stats import score_statistics, validate_confidence
 
 MIN_SUBSET_SIZE = 30
 PARTIAL_RESULT_NAMES = ['sonority_partial_rsa', 'intensity_partial_rsa']
@@ -35,6 +36,7 @@ def sample_syllables(syllable_population, subset_size, rng):
         than the population size)
     rng: numpy random generator
     """
+    _validate_unique_syllable_keys(syllable_population)
     sampled = _draw_syllables(syllable_population, subset_size, rng)
     vectors = np.concatenate([syllable.vectors for syllable in sampled])
     sonority = np.concatenate([syllable.sonority for syllable in sampled])
@@ -58,6 +60,27 @@ def _draw_syllables(syllable_population, subset_size, rng):
     indices = rng.choice(len(syllable_population), size=subset_size,
         replace=False)
     return [syllable_population[int(index)] for index in indices]
+
+
+def _validate_unique_syllable_keys(syllables,
+        context='syllable population'):
+    """Validate syllable-key uniqueness and return the unique-key count."""
+    seen = set()
+    duplicate_keys = []
+    for syllable in syllables:
+        key = syllable.key
+        if key in seen:
+            if len(duplicate_keys) < 3 and key not in duplicate_keys:
+                duplicate_keys.append(key)
+        else:
+            seen.add(key)
+    if duplicate_keys:
+        examples = ', '.join(repr(key) for key in duplicate_keys)
+        raise ValueError(
+            f'{context} contains {len(syllables)} entries but only '
+            f'{len(seen)} unique syllable keys; duplicate examples: '
+            f'{examples}')
+    return len(seen)
 
 
 def compute_rsa_scores(syllable_population, subset_size, n_subsets,
@@ -98,6 +121,8 @@ def _compute_rsa_results(syllable_population, subset_size, n_subsets,
     controlling for intensity and model–intensity RSA controlling for
     sonority.
     """
+    _validate_unique_syllable_keys(syllable_population,
+        context=f'layer {syllable_population.layer} syllable population')
     if n_subsets <= 0:
         raise ValueError('n_subsets must be positive')
     if subset_size < MIN_SUBSET_SIZE:
@@ -275,53 +300,39 @@ def _append_invalid_partial_results(results, invalid_subsets,
     invalid_reasons.append(reason)
 
 
-def summarize_rsa_scores(scores_by_layer, ci=0.95):
+def summarize_rsa_scores(scores_by_layer, confidence=0.95):
     """
     Summarize RSA scores per layer.
 
-    mean_rsa and the confidence interval are computed over the non-NaN
-    scores only; n_subsets is the number of subsets drawn and
-    n_subsets_valid is how many were non-NaN (the effective sample behind
-    mean/CI).
+    Mean, sample standard deviation, standard error, and the Student's t
+    confidence interval around the mean are computed over finite scores only.
 
     scores_by_layer: dict mapping layer to a list of RSA scores
-    ci: confidence level as a fraction, e.g. 0.95 for a 95% interval;
-        values below 0.90 emit a warning
+    confidence: confidence level as a fraction, e.g. 0.95 for a 95% interval
     """
-    _validate_ci(ci)
-    return _summarize_rsa_scores(scores_by_layer, ci)
+    validate_confidence(confidence)
+    return _summarize_rsa_scores(scores_by_layer, confidence)
 
 
-def _summarize_rsa_scores(scores_by_layer, ci):
+def _summarize_rsa_scores(scores_by_layer, confidence):
     """Summarize scores after the confidence level has been validated."""
-    alpha = (1 - ci) / 2
     rows = []
 
     for layer in sorted(scores_by_layer):
-        rsa = np.asarray(scores_by_layer[layer], dtype=float)
-        valid = rsa[~np.isnan(rsa)]
-        rows.append({
+        statistics = score_statistics(scores_by_layer[layer], confidence)
+        row = {
             'layer': layer,
-            'mean_rsa': float(np.mean(valid)) if valid.size else float('nan'),
-            'ci_lower': (float(np.percentile(valid, 100 * alpha))
-                if valid.size else float('nan')),
-            'ci_upper': (float(np.percentile(valid, 100 * (1 - alpha)))
-                if valid.size else float('nan')),
-            'n_subsets': len(rsa),
-            'n_subsets_valid': int(valid.size),
-        })
+            'rsa_mean': statistics['mean'],
+            'rsa_sd': statistics['sd'],
+            'rsa_sem': statistics['sem'],
+            'rsa_mean_ci_lower': statistics['mean_ci_lower'],
+            'rsa_mean_ci_upper': statistics['mean_ci_upper'],
+            'rsa_n_valid': statistics['n_valid'],
+            'n_subsets': statistics['n_total'],
+        }
+        rows.append(row)
 
     return rows
-
-
-def _validate_ci(ci, warn=True):
-    """Validate a fractional confidence level and optionally warn if low."""
-    if not 0 < ci < 1:
-        raise ValueError('ci must be greater than 0 and less than 1')
-    if warn and ci < 0.9:
-        warnings.warn(
-            f'ci ({ci}) is below 0.90; this is an unexpected confidence '
-            'interval level', stacklevel=3)
 
 
 def replay_sampled_keys(syllable_keys, seed, subset_size, n_subsets):
@@ -333,7 +344,7 @@ def replay_sampled_keys(syllable_keys, seed, subset_size, n_subsets):
     the population order. Inputs come from a run log layer entry.
 
     syllable_keys: population syllable keys in fetched order
-    seed: the layer seed recorded in the run log
+    seed: the shared sampling seed recorded in the layer log
     subset_size: number of syllables per subset
     n_subsets: number of subsets to draw
     """

@@ -30,6 +30,15 @@ def test_sampling_draws_distinct_syllables():
     assert vectors.shape == (60, 4)
 
 
+def test_sampling_rejects_duplicate_syllable_keys():
+    population = make_population()
+    population.syllables[1].key = population.syllables[0].key
+
+    with pytest.raises(ValueError, match=(
+            '90 entries but only 89 unique syllable keys')):
+        sample_syllables(population, 30, np.random.default_rng(0))
+
+
 def test_sampling_rejects_more_syllables_than_population():
     population = make_population()
     rng = np.random.default_rng(0)
@@ -214,28 +223,35 @@ def test_summarize_rsa_scores_returns_one_row_per_layer():
     summary = summarize_rsa_scores(scores)
 
     assert [row['layer'] for row in summary] == [0, 1]
-    assert summary[0]['mean_rsa'] == pytest.approx(0.2)
+    assert summary[0]['rsa_mean'] == pytest.approx(0.2)
+    assert summary[0]['rsa_sd'] == pytest.approx(0.1)
+    assert summary[0]['rsa_sem'] == pytest.approx(0.1 / np.sqrt(3))
     assert summary[0]['n_subsets'] == 3
-    assert summary[0]['n_subsets_valid'] == 3
-    assert summary[0]['ci_lower'] <= summary[0]['ci_upper']
+    assert summary[0]['rsa_n_valid'] == 3
+    assert (summary[0]['rsa_mean_ci_lower']
+        <= summary[0]['rsa_mean_ci_upper'])
 
 
 def test_summarize_rsa_scores_accepts_fractional_confidence_level():
-    summary = summarize_rsa_scores({0: [0.0, 0.25, 0.5, 0.75, 1.0]}, ci=0.8)
+    summary = summarize_rsa_scores(
+        {0: [0.0, 0.25, 0.5, 0.75, 1.0]}, confidence=0.8)
 
-    assert summary[0]['ci_lower'] == pytest.approx(0.1)
-    assert summary[0]['ci_upper'] == pytest.approx(0.9)
+    assert summary[0]['rsa_mean_ci_lower'] == pytest.approx(0.22896,
+        abs=1e-5)
+    assert summary[0]['rsa_mean_ci_upper'] == pytest.approx(0.77104,
+        abs=1e-5)
 
 
 def test_summarize_rsa_scores_warns_for_low_confidence_level():
-    with pytest.warns(UserWarning, match='unexpected confidence interval'):
-        summarize_rsa_scores({0: [0.1, 0.2, 0.3]}, ci=0.8)
+    with pytest.warns(UserWarning, match='unexpected confidence level'):
+        summarize_rsa_scores({0: [0.1, 0.2, 0.3]}, confidence=0.8)
 
 
-@pytest.mark.parametrize('ci', [0, 1, 95])
-def test_summarize_rsa_scores_rejects_invalid_confidence_level(ci):
+@pytest.mark.parametrize('confidence', [0, 1, 95])
+def test_summarize_rsa_scores_rejects_invalid_confidence_level(confidence):
     with pytest.raises(ValueError, match='greater than 0 and less than 1'):
-        summarize_rsa_scores({0: [0.1, 0.2, 0.3]}, ci=ci)
+        summarize_rsa_scores({0: [0.1, 0.2, 0.3]},
+            confidence=confidence)
 
 
 def test_summarize_rsa_scores_ignores_nan_but_counts_all_subsets():
@@ -244,8 +260,8 @@ def test_summarize_rsa_scores_ignores_nan_but_counts_all_subsets():
     summary = summarize_rsa_scores(scores)
 
     assert summary[0]['n_subsets'] == 3
-    assert summary[0]['n_subsets_valid'] == 2
-    assert summary[0]['mean_rsa'] == pytest.approx(0.2)
+    assert summary[0]['rsa_n_valid'] == 2
+    assert summary[0]['rsa_mean'] == pytest.approx(0.2)
 
 
 def test_summarize_rsa_scores_handles_all_nan():
@@ -254,9 +270,9 @@ def test_summarize_rsa_scores_handles_all_nan():
     summary = summarize_rsa_scores(scores)
 
     assert summary[0]['n_subsets'] == 2
-    assert summary[0]['n_subsets_valid'] == 0
-    assert np.isnan(summary[0]['mean_rsa'])
-    assert np.isnan(summary[0]['ci_lower'])
+    assert summary[0]['rsa_n_valid'] == 0
+    assert np.isnan(summary[0]['rsa_mean'])
+    assert np.isnan(summary[0]['rsa_mean_ci_lower'])
 
 
 def test_replay_reproduces_the_sampled_keys():

@@ -71,8 +71,9 @@ Calculate this per subset because predictor correlation changes with the
 sample.
 
 RDM cells are dependent, so ordinary OLS p-values and standard errors should
-not be used. Interpret the package's repeated-subset distributions and
-percentile intervals descriptively; formal inference would require an
+not be used. Interpret the raw repeated-subset distributions, their sample
+standard deviations, and the reported mean confidence intervals in terms of
+the subset-sampling procedure; formal population inference would require an
 appropriate nonparametric procedure.
 
 ## References

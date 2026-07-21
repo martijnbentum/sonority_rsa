@@ -8,10 +8,6 @@ from sonority_rsa.plot import (PANELS_PLOT_FILENAME, PLOT_FILENAME,
     plot_analyses, plot_analysis)
 
 
-SUMMARY_ROWS = [
-    {'layer': 2, 'mean_rsa': 0.3, 'ci_lower': 0.2, 'ci_upper': 0.4},
-    {'layer': 1, 'mean_rsa': 0.2, 'ci_lower': 0.1, 'ci_upper': 0.3},
-]
 SCORE_ROWS = [
     {'layer': 1, 'rsa': 0.1},
     {'layer': 1, 'rsa': 0.3},
@@ -27,9 +23,7 @@ def write_csv(path, rows):
         writer.writerows(rows)
 
 
-def write_plot_inputs(output_dir, summary_rows=SUMMARY_ROWS,
-        score_rows=SCORE_ROWS):
-    write_csv(output_dir / 'summary.csv', summary_rows)
+def write_plot_inputs(output_dir, score_rows=SCORE_ROWS):
     write_csv(output_dir / 'rsa_scores.csv', score_rows)
 
 

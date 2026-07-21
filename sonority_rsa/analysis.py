@@ -13,16 +13,21 @@ import numpy as np
 from sonority_rsa.intensity import (IntensityCache,
     add_centered_intensities)
 from sonority_rsa.sampling import (_compute_rsa_results,
-    _summarize_rsa_scores, _validate_ci, make_rng, replay_sampled_keys,
-    summarize_rsa_scores)
+    _validate_unique_syllable_keys, replay_sampled_keys)
 from sonority_rsa.fetch import fetch_syllable_data
+from sonority_rsa.util_stats import score_statistics, validate_confidence
 
-SUMMARY_COLUMNS = ['run_id', 'layer', 'mean_rsa', 'ci_lower', 'ci_upper',
-    'n_subsets', 'n_subsets_valid', 'subset_size']
-RANDOM_BASELINE_SUMMARY_COLUMNS = ['mean_random_baseline_rsa',
-    'random_baseline_ci_lower', 'random_baseline_ci_upper',
-    'mean_rsa_difference', 'rsa_difference_ci_lower',
-    'rsa_difference_ci_upper']
+SUMMARY_STATISTIC_NAMES = ['mean', 'sd', 'sem', 'mean_ci_lower',
+    'mean_ci_upper', 'n_valid']
+SUMMARY_COLUMNS = ['run_id', 'layer'] + [
+    f'rsa_{name}' for name in SUMMARY_STATISTIC_NAMES
+] + ['n_subsets', 'subset_size']
+RANDOM_BASELINE_METRICS = ['random_baseline_rsa', 'rsa_difference']
+RANDOM_BASELINE_SUMMARY_COLUMNS = [
+    f'{metric}_{name}'
+    for metric in RANDOM_BASELINE_METRICS
+    for name in SUMMARY_STATISTIC_NAMES
+]
 SCORE_COLUMNS = ['run_id', 'layer', 'subset', 'rsa', 'invalid_reason']
 RANDOM_BASELINE_SCORE_COLUMNS = ['random_baseline_rsa', 'rsa_difference']
 INTENSITY_RESULT_NAMES = ['intensity_rsa',
@@ -30,18 +35,19 @@ INTENSITY_RESULT_NAMES = ['intensity_rsa',
     'sonority_intensity_rdm_correlation',
     'sonority_partial_rsa',
     'intensity_partial_rsa']
-INTENSITY_SUMMARY_COLUMNS = [column
-    for name in INTENSITY_RESULT_NAMES
-    for column in [f'mean_{name}', f'{name}_ci_lower', f'{name}_ci_upper']]
-INTENSITY_SUMMARY_COLUMNS.append('n_subsets_partial_valid')
+INTENSITY_SUMMARY_COLUMNS = [
+    f'{metric}_{name}'
+    for metric in INTENSITY_RESULT_NAMES
+    for name in SUMMARY_STATISTIC_NAMES
+]
 INTENSITY_SCORE_COLUMNS = INTENSITY_RESULT_NAMES + [
     'intensity_invalid_reason', 'partial_invalid_reason']
 RANDOM_BASELINE_SALT = 42
 
 
 def run_analysis(syllables, model_name, layers, echoframe_store,
-        subset_size, n_subsets, collar=500, random_state=42, ci=0.95,
-        verbose=False, compute_random_baseline=False,
+        subset_size, n_subsets, collar=500, random_state=42,
+        confidence=0.95, verbose=False, compute_random_baseline=False,
         compute_intensity_baseline=False):
     """
     Fetch syllable populations per layer and run subset-sampled RSA.
@@ -60,9 +66,9 @@ def run_analysis(syllables, model_name, layers, echoframe_store,
     A layer with no usable data (no stored embedding for any phrase, or
     every syllable skipped) is dropped: it is left out of summary and
     results and recorded under the log's 'failed_layers' key with the
-    reason. Each layer consumes exactly one seed draw whether or not it
-    fails, so a dropped layer does not shift the seeds of the others.
-    Raises ValueError only when every requested layer fails.
+    reason. All surviving layers use the same sampling seed and must expose
+    identical usable syllable keys in the same order. Raises ValueError when
+    populations differ or when every requested layer fails.
 
     This assumes the same usable syllable population is available for every
     requested layer. A subset-size validation error is therefore treated as
@@ -75,8 +81,8 @@ def run_analysis(syllables, model_name, layers, echoframe_store,
     subset_size: number of syllables per subset
     n_subsets: number of subsets to draw
     collar: milliseconds of context stored around the phrase
-    random_state: integer master seed (default 42), logged for replay
-    ci: confidence level as a fraction, e.g. 0.95 for a 95% interval
+    random_state: integer sampling seed shared by every layer (default 42)
+    confidence: confidence level for Student's t intervals around means
     verbose: print each layer's skip report (off by default; the same
         counts are recorded per layer in the run log regardless)
     compute_random_baseline: compute one shuffled-sonority RSA score for
@@ -85,10 +91,14 @@ def run_analysis(syllables, model_name, layers, echoframe_store,
         sonority/intensity correlations, and both partial RSA directions
         for every subset (off by default)
     """
+    syllables = list(syllables)
+    _validate_unique_syllable_keys(syllables, context='input syllables')
     layers = list(layers)
-    _validate_ci(ci, warn=False)
+    validate_confidence(confidence, warn=False)
     seed = int(random_state)
-    rng = make_rng(seed)
+    sampling_seed = seed
+    baseline_seed = (_random_baseline_seed(sampling_seed)
+        if compute_random_baseline else None)
     results = {'rsa': {}}
     if compute_random_baseline:
         results['random_baseline_rsa'] = {}
@@ -98,31 +108,43 @@ def run_analysis(syllables, model_name, layers, echoframe_store,
     else:
         intensity_cache = None
     layer_logs, failed_layers = {}, {}
+    reference_layer = None
+    reference_keys = None
 
     for layer in layers:
-        layer_seed = int(rng.integers(0, np.iinfo(np.uint32).max))
-        baseline_seed = (_random_baseline_seed(layer_seed)
-            if compute_random_baseline else None)
         try:
             syllable_population = fetch_syllable_data(syllables, model_name,
                 layer, echoframe_store, collar=collar, verbose=verbose)
         except ValueError as error:
-            failed_layers[str(layer)] = {'seed': layer_seed,
+            failed_layers[str(layer)] = {'seed': sampling_seed,
                 'reason': str(error)}
             if baseline_seed is not None:
                 failed_layers[str(layer)]['random_baseline_seed'] = (
                     baseline_seed)
             warnings.warn(f'layer {layer} dropped: {error}', stacklevel=2)
             continue
+        population_keys = list(syllable_population.keys)
+        if reference_keys is None:
+            reference_layer = layer
+            reference_keys = population_keys
+        elif population_keys != reference_keys:
+            raise ValueError(
+                f'layer {layer} syllable population keys or order differ '
+                f'from layer {reference_layer}; paired layer sampling '
+                'requires identical populations')
         if compute_intensity_baseline:
             add_centered_intensities(syllable_population, intensity_cache)
+        n_unique_syllable_keys = _validate_unique_syllable_keys(
+            syllable_population,
+            context=f'layer {layer} syllable population')
         layer_results, diagnostics = _compute_rsa_results(
             syllable_population, subset_size, n_subsets,
-            random_state=layer_seed, random_baseline_state=baseline_seed,
+            random_state=sampling_seed,
+            random_baseline_state=baseline_seed,
             compute_intensity_baseline=compute_intensity_baseline)
         if not np.isfinite(layer_results['rsa']).any():
             failed_layers[str(layer)] = {
-                'seed': layer_seed,
+                'seed': sampling_seed,
                 'reason': 'every sampled subset produced an invalid RSA '
                     'score',
                 'invalid_subsets': diagnostics['invalid_subsets'],
@@ -138,8 +160,9 @@ def run_analysis(syllables, model_name, layers, echoframe_store,
         for metric, metric_scores in layer_results.items():
             results[metric][layer] = metric_scores
         layer_logs[str(layer)] = {
-            'seed': layer_seed,
+            'seed': sampling_seed,
             'n_syllables_in_population': len(syllable_population),
+            'n_unique_syllable_keys': n_unique_syllable_keys,
             'skipped': syllable_population.skipped,
             'invalid_subsets': diagnostics['invalid_subsets'],
             'invalid_reasons': diagnostics['invalid_reasons'],
@@ -165,20 +188,16 @@ def run_analysis(syllables, model_name, layers, echoframe_store,
             f'{sorted(failed_layers)}')
 
     log = _build_log(model_name, layers, echoframe_store, subset_size,
-        n_subsets, collar, seed, ci, compute_random_baseline,
+        n_subsets, collar, seed, confidence, compute_random_baseline,
         compute_intensity_baseline, layer_logs, failed_layers)
-    summary = summarize_rsa_scores(results['rsa'], ci=ci)
-    if compute_random_baseline:
-        _add_random_baseline_summary(summary, results, ci)
-    if compute_intensity_baseline:
-        _add_intensity_summary(summary, results, ci)
+    summary = _summarize_results(results, confidence)
     for row in summary:
         row['subset_size'] = subset_size
         row['run_id'] = log['run_id']
     return summary, results, log
 
 
-def save_analysis(summary, results, log, out):
+def save_analysis(summary, results, log, out, overwrite=False):
     """
     Save summary, raw per-subset results, and the run log to a directory.
 
@@ -186,8 +205,17 @@ def save_analysis(summary, results, log, out):
     results: raw results by metric and layer from run_analysis
     log: run log from run_analysis
     out: output directory
+    overwrite: replace existing analysis files when true
     """
     out = Path(out)
+    output_paths = [out / 'summary.csv', out / 'rsa_scores.csv',
+        out / 'run_log.json']
+    existing = [path for path in output_paths if path.exists()]
+    if existing and not overwrite:
+        filenames = ', '.join(path.name for path in existing)
+        raise FileExistsError(
+            f'{out} already contains analysis output: {filenames}; '
+            'pass overwrite=True to replace it')
     out.mkdir(parents=True, exist_ok=True)
     has_baseline = 'random_baseline_rsa' in results
     has_intensity = 'intensity_rsa' in results
@@ -236,13 +264,13 @@ def log_sampled_keys(log, layer):
 
 
 def _build_log(model_name, layers, echoframe_store, subset_size,
-        n_subsets, collar, seed, ci, compute_random_baseline,
+        n_subsets, collar, seed, confidence, compute_random_baseline,
         compute_intensity_baseline, layer_logs, failed_layers):
     """
     Assemble the run log dict.
 
-    layer_logs: per-layer seed, population keys, and skip counts
-    failed_layers: per-layer seed and reason for each dropped layer
+    layer_logs: per-layer population keys, shared seed, and skip counts
+    failed_layers: shared seed and reason for each dropped layer
     """
     now = datetime.datetime.now().astimezone()
     return {
@@ -255,7 +283,8 @@ def _build_log(model_name, layers, echoframe_store, subset_size,
             'collar': collar,
             'subset_size': subset_size,
             'n_subsets': n_subsets,
-            'ci': ci,
+            'confidence_level': confidence,
+            'interval_method': 'student_t_mean',
             'seed': seed,
             'compute_random_baseline': compute_random_baseline,
             'compute_intensity_baseline': compute_intensity_baseline,
@@ -263,13 +292,15 @@ def _build_log(model_name, layers, echoframe_store, subset_size,
         'echoframe_store': str(getattr(echoframe_store, 'root',
             echoframe_store)),
         'key_encoding': 'hex for bytes keys, text otherwise',
-        'sampling': ('per layer: rng = default_rng(layer seed); one '
+        'sampling': ('a shared seed and identical population order produce '
+            'the same syllable subsets in every layer; each subset uses one '
             'rng.choice(n_population, size=subset_size, replace=False) '
-            'draw per subset over syllable_keys order'),
+            'draw'),
         'random_baseline': (
             'per subset: shuffle sampled sonority once with a separate rng; '
-            'its seed is derived from SeedSequence([layer seed, 42]) so '
-            'shuffling does not change subset sampling or replay'
+            'its shared seed is derived from SeedSequence([sampling seed, '
+            '42]); the same label shuffle is used across paired layers and '
+            'does not change subset sampling or replay'
             if compute_random_baseline else None),
         'intensity_baseline': (
             'per phone: 10 * log10(mean(signal ** 2) / 4e-10) over the '
@@ -301,64 +332,48 @@ def _key_to_text(key):
     return str(key)
 
 
-def _random_baseline_seed(layer_seed):
+def _random_baseline_seed(sampling_seed):
     """Derive a baseline seed without advancing the sampling generator."""
     seed_sequence = np.random.SeedSequence(
-        [layer_seed, RANDOM_BASELINE_SALT])
+        [sampling_seed, RANDOM_BASELINE_SALT])
     return int(seed_sequence.generate_state(1, dtype=np.uint32)[0])
 
 
-def _add_random_baseline_summary(summary, results, ci):
-    """Add baseline and paired-difference statistics to summary rows."""
-    baseline_rows = {
-        row['layer']: row
-        for row in _summarize_rsa_scores(
-            results['random_baseline_rsa'], ci)
-    }
-    differences = {
-        layer: (np.asarray(results['rsa'][layer], dtype=float)
-            - np.asarray(results['random_baseline_rsa'][layer],
-                dtype=float))
-        for layer in results['rsa']
-    }
-    difference_rows = {
-        row['layer']: row
-        for row in _summarize_rsa_scores(differences, ci)
-    }
-
-    for row in summary:
-        baseline = baseline_rows[row['layer']]
-        difference = difference_rows[row['layer']]
-        row.update({
-            'mean_random_baseline_rsa': baseline['mean_rsa'],
-            'random_baseline_ci_lower': baseline['ci_lower'],
-            'random_baseline_ci_upper': baseline['ci_upper'],
-            'mean_rsa_difference': difference['mean_rsa'],
-            'rsa_difference_ci_lower': difference['ci_lower'],
-            'rsa_difference_ci_upper': difference['ci_upper'],
-        })
-
-
-def _add_intensity_summary(summary, results, ci):
-    """Add intensity RSA and correlation statistics to summary rows."""
-    rows_by_metric = {
-        metric: {
-            row['layer']: row
-            for row in _summarize_rsa_scores(results[metric], ci)
+def _summarize_results(results, confidence):
+    """Build per-layer statistics for every computed score metric."""
+    metrics = [('rsa', results['rsa'])]
+    if 'random_baseline_rsa' in results:
+        metrics.append(('random_baseline_rsa',
+            results['random_baseline_rsa']))
+        differences = {
+            layer: (np.asarray(results['rsa'][layer], dtype=float)
+                - np.asarray(results['random_baseline_rsa'][layer],
+                    dtype=float))
+            for layer in results['rsa']
         }
-        for metric in INTENSITY_RESULT_NAMES
-    }
-    for row in summary:
-        layer = row['layer']
-        for metric, metric_rows in rows_by_metric.items():
-            metric_row = metric_rows[layer]
-            row.update({
-                f'mean_{metric}': metric_row['mean_rsa'],
-                f'{metric}_ci_lower': metric_row['ci_lower'],
-                f'{metric}_ci_upper': metric_row['ci_upper'],
-            })
-        row['n_subsets_partial_valid'] = rows_by_metric[
-            'sonority_partial_rsa'][layer]['n_subsets_valid']
+        metrics.append(('rsa_difference', differences))
+    metrics.extend((metric, results[metric])
+        for metric in INTENSITY_RESULT_NAMES if metric in results)
+
+    rows = []
+    for layer in sorted(results['rsa']):
+        row = {'layer': layer}
+        n_subsets = None
+        for metric, scores_by_layer in metrics:
+            statistics = score_statistics(scores_by_layer[layer],
+                confidence)
+            if n_subsets is None:
+                n_subsets = statistics['n_total']
+            elif statistics['n_total'] != n_subsets:
+                raise RuntimeError(
+                    f'layer {layer} metric {metric} has '
+                    f'{statistics["n_total"]} subsets; expected '
+                    f'{n_subsets}')
+            row.update({f'{metric}_{name}': statistics[name]
+                for name in SUMMARY_STATISTIC_NAMES})
+        row['n_subsets'] = n_subsets
+        rows.append(row)
+    return rows
 
 
 def _summary_columns(has_baseline, has_intensity):
@@ -368,7 +383,7 @@ def _summary_columns(has_baseline, has_intensity):
         predictor_columns.extend(RANDOM_BASELINE_SUMMARY_COLUMNS)
     if has_intensity:
         predictor_columns.extend(INTENSITY_SUMMARY_COLUMNS)
-    return SUMMARY_COLUMNS[:5] + predictor_columns + SUMMARY_COLUMNS[5:]
+    return SUMMARY_COLUMNS[:-2] + predictor_columns + SUMMARY_COLUMNS[-2:]
 
 
 def _score_columns(has_baseline, has_intensity):

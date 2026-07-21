@@ -35,13 +35,11 @@ also reports partial RSA in both directions: model–sonority controlling for
 intensity and model–intensity controlling for sonority.
 
 The RSA score is the Spearman correlation between the upper triangles of
-those RDMs. Repeating over many samples returns the mean RSA, percentile
-confidence intervals, the raw per-subset scores, and a run log that makes
-every sampled subset replayable.
-
-The `ci` argument is a confidence level expressed as a fraction; its default
-of `0.95` produces a 95% percentile interval. Values below `0.90` are
-accepted with a warning, while values outside `(0, 1)` are rejected.
+those RDMs. Repeating over many subsets returns the mean RSA, sample standard
+deviation, standard error, a Student's t confidence interval around the mean,
+the raw per-subset scores, and a replayable run log. The `confidence` argument
+defaults to `0.95`. Values below `0.90` are accepted with a warning, while
+values outside `(0, 1)` are rejected.
 
 This analysis tests whether wav2vec frame geometry reflects sonority across
 sampled syllable sets.
@@ -120,6 +118,7 @@ summary, results, log = run_analysis(
     subset_size=100,
     n_subsets=1000,
     random_state=1,
+    confidence=0.95,
     compute_random_baseline=True,
     compute_intensity_baseline=True,
 )
@@ -132,7 +131,7 @@ results['sonority_intensity_rdm_correlation'][7]
 results['sonority_partial_rsa'][7]
 results['intensity_partial_rsa'][7]
 display_analysis(summary, results)
-save_analysis(summary, results, log, 'results/')
+save_analysis(summary, results, log, 'results/', overwrite=False)
 plot_analysis('results/', title='RSA by model layer')
 plot_analysis('results/', title='RSA by model layer', filetype='.pdf')
 plot_analyses(
@@ -153,17 +152,21 @@ layer whose usable phones all share one sonority class has no variation to
 correlate against, so it is dropped like any other unusable layer (issue
 recorded under `failed_layers`).
 
-The analysis assumes that usable syllables are the same for every requested
-layer. Consequently, an invalid `subset_size` is a configuration error for
-the full run, rather than a reason to drop an individual layer.
+Input and fetched populations must contain unique syllable keys. The analysis
+also verifies that every requested layer has exactly the same usable keys in
+the same order. All layers use one shared sampling seed, so subset 0 contains
+the same syllables in every layer, and likewise for every subsequent subset.
+A population mismatch or invalid `subset_size` is a configuration error for
+the full run rather than a reason to drop an individual layer.
 
 When `compute_random_baseline=True`, every sampled subset produces two paired
 scores: its observed RSA and an RSA after shuffling that subset's sonority
 values once. Both scores reuse the same model RDM. The shuffle uses a separate
-generator whose seed is deterministically derived from the layer seed, so it
-does not change syllable sampling or logged replay. Results are grouped first
-by metric and then by layer; without the flag, `results` contains only the
-`rsa` key.
+generator whose seed is deterministically derived from the shared sampling
+seed. The same shuffle is used for paired subsets across layers, and it does
+not change syllable sampling or logged replay. Results are grouped first by
+metric and then by layer; without the flag, `results` contains only the `rsa`
+key.
 
 When `compute_intensity_baseline=True`, the complete audio interval of every
 phone with a usable vector is converted to one RMS-power intensity value:
@@ -192,9 +195,10 @@ for a missing or invalid vector does not require audio.
 
 Individual sampled subsets that happen to contain one sonority class have
 no sonority-distance variation. Their RSA score is recorded as `NaN` and is
-excluded from the summary; `n_subsets_valid` reports the resulting effective
-sample size. A layer whose subsets are all invalid is dropped and recorded
-under `failed_layers` with its invalid-subset diagnostics.
+excluded from the summary; `rsa_n_valid` reports the resulting effective
+sample size. Every optional metric has its own `<metric>_n_valid` field. A
+layer whose subsets are all invalid is dropped and recorded under
+`failed_layers` with its invalid-subset diagnostics.
 
 The fetch and sampling steps are also available separately for
 interactive work. A single random baseline score can be computed by
@@ -244,19 +248,17 @@ A self-contained toy run (with fake stores, no LMDB needed) lives in
 
 ## Outputs and Traceability
 
-`save_analysis(summary, results, log, out)` writes one directory per run:
+`save_analysis(summary, results, log, out, overwrite=False)` writes one
+directory per run. It refuses to replace existing analysis files unless
+`overwrite=True` is passed explicitly.
 
-- `summary.csv`: one row per layer with `run_id`, `layer`, `mean_rsa`,
-  `ci_lower`, `ci_upper`, `n_subsets`, `n_subsets_valid`, `subset_size`
-  (`n_subsets` is the number of subsets drawn; `n_subsets_valid` is how
-  many were non-NaN, i.e. the effective sample behind `mean_rsa` and the
-  interval). With the random baseline enabled, it also contains the baseline
-  mean and interval and the mean paired RSA difference and its interval. With
-  the intensity baseline enabled, it contains means and intervals for
-  `intensity_rsa`, `sonority_intensity_correlation`, and
-  `sonority_intensity_rdm_correlation`, plus `sonority_partial_rsa` and
-  `intensity_partial_rsa`. `n_subsets_partial_valid` gives the shared valid
-  subset count for the paired partial results.
+- `summary.csv`: one row per layer with `run_id`, `layer`, `n_subsets`, and
+  `subset_size`. Every score metric has `<metric>_mean`, `<metric>_sd`,
+  `<metric>_sem`, `<metric>_mean_ci_lower`, `<metric>_mean_ci_upper`, and
+  `<metric>_n_valid`. Confidence bounds are Student's t intervals around the
+  mean of finite subset scores. Optional metrics cover the random baseline,
+  paired observed-minus-baseline difference, intensity results, correlations,
+  and both partial RSA directions.
 - `rsa_scores.csv`: one row per subset with `run_id`, `layer`, `subset`,
   `rsa`, and `invalid_reason` (blank for valid scores). With the random
   baseline enabled, `random_baseline_rsa` and the paired `rsa_difference`
@@ -266,18 +268,19 @@ A self-contained toy run (with fake stores, no LMDB needed) lives in
   reported.
 - `run_log.json`: everything needed to trace and replay the run
 - `rsa_by_layer.png` or `rsa_by_layer.pdf`: created by
-  `plot_analysis(output_dir, title, filetype='.png', show_plot=True)` from
-  `rsa_scores.csv`.
+  `plot_analysis(output_dir, title, filetype='.png', show_plot=True,
+  confidence=0.95)` from `rsa_scores.csv`.
   It shows finite subset-level values from `rsa_scores.csv` together with
-  their per-layer means and 95% Student's t confidence intervals around the
-  means. These plotting intervals are recomputed from the raw scores; they
-  are distinct from the percentile intervals stored in `summary.csv`.
-  Intensity, partial RSA, and random baseline series are included when those
-  raw-score columns are available.
+  their per-layer means and Student's t confidence intervals around the
+  means. Plotting recomputes the same statistics from the raw scores through
+  the shared `util_stats.py` implementation. Intensity, partial RSA, and
+  random baseline series are included when those raw-score columns are
+  available.
 - `rsa_by_layer_panels.png` or `rsa_by_layer_panels.pdf`: created by
-  `plot_analyses(output_dirs, titles, filetype='.png', show_plot=True)` in the
-  parent of the first analysis directory. It shows one analysis per panel and
-  uses the requested file type for the combined figure.
+  `plot_analyses(output_dirs, titles, filetype='.png', show_plot=True,
+  confidence=0.95)` in the parent of the first analysis directory. It shows
+  one analysis per panel and uses the requested file type for the combined
+  figure.
 
 Both plotting functions turn on Matplotlib interactive mode and show the
 figure by default. Pass `show_plot=False` to save without displaying it.
@@ -285,18 +288,14 @@ figure by default. Pass `show_plot=False` to save without displaying it.
 The `run_id` appears in both CSV files and the log, so results stay
 traceable when CSV files from several runs are combined.
 
-The run log records the package version, all parameters (including the
-master seed, which defaults to 42 and can be overridden with
-`random_state`), whether either optional baseline was enabled, the echoframe
-store root, and per layer: the layer seed, the derived random-baseline seed
-when applicable, the skip counts,
-and the population syllable keys in fetched order (bytes keys are hex
-encoded), plus invalid-subset counts and a per-subset reason list. A layer
-with no usable data is dropped from `summary` and `results` and recorded
-instead under the log's `failed_layers` key (its seed and the reason); every
-requested layer still consumes one seed draw, so a dropped layer leaves the
-surviving layers' seeds unchanged. A run in which every layer fails raises
-`ValueError`. Because each subset consumes exactly one
+The run log records the package version, confidence level, interval method,
+shared sampling seed, optional-baseline settings, and echoframe store root.
+For each layer it records total and unique population sizes, the shared seed,
+derived random-baseline seed when applicable, skip counts, population keys in
+fetched order, invalid-subset counts, and per-subset reasons. Bytes keys are
+hex encoded. A layer with no usable data is dropped from `summary` and
+`results` and recorded under `failed_layers`; a run in which every layer
+fails raises `ValueError`. Because each subset consumes exactly one
 `rng.choice(n_population, size=subset_size, replace=False)` draw, the sampled
 syllables of every subset can be recomputed from the log alone:
 

@@ -12,8 +12,8 @@
 - Keep ordinary sonority and intensity RSA results.
 - If either partial direction is undefined, record both as `NaN` and attach
   one shared reason identifying which direction or directions failed.
-- Reuse the existing subset means and percentile confidence intervals; do
-  not add p-values or permutation tests.
+- Reuse the shared subset score statistics; do not add p-values or
+  permutation tests.
 - Save, display, log, and plot both partial metrics. Plot partial series as
   dashed lines in the color of their corresponding ordinary RSA series.
 

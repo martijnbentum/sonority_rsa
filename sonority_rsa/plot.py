@@ -4,11 +4,10 @@ import csv
 import math
 from pathlib import Path
 
-from sonority_rsa.stats_util import mean_confidence_interval
+from sonority_rsa.util_stats import score_statistics
 
 PLOT_FILENAME = 'rsa_by_layer.png'
 PANELS_PLOT_FILENAME = 'rsa_by_layer_panels.png'
-PLOT_CONFIDENCE = 0.95
 SUPPORTED_FILETYPES = {'png', 'pdf'}
 SERIES = [
     {
@@ -50,21 +49,23 @@ SERIES = [
 PARTIAL_SERIES = [SERIES[1], SERIES[3]]
 
 
-def plot_analysis(output_dir, title, filetype='.png', show_plot=True):
+def plot_analysis(output_dir, title, filetype='.png', show_plot=True,
+        confidence=0.95):
     """
     Plot RSA by layer from a saved analysis directory.
 
     The finite subset-level values in ``rsa_scores.csv`` are shown as
-    translucent points and used to compute the mean lines and shaded 95%
-    Student's t confidence intervals around those means. Intensity and
-    random-baseline RSA are added when their raw-score columns are available.
-    Partial sonority and intensity RSA are shown as dashed lines when an
-    intensity-enabled analysis includes them.
+    translucent points and used to compute the mean lines and shaded
+    Student's t confidence intervals around those means. Intensity and random-
+    baseline RSA are added when their raw-score columns are available. Partial
+    sonority and intensity RSA are shown as dashed lines when an intensity-
+    enabled analysis includes them.
 
     output_dir: directory written by save_analysis
     title: plot title
     filetype: output format, ``.png`` or ``.pdf`` (default ``.png``)
     show_plot: enable Matplotlib interactive mode and show the figure
+    confidence: confidence level for Student's t intervals around means
 
     Returns the path to ``rsa_by_layer.<filetype>`` in output_dir.
     """
@@ -74,7 +75,7 @@ def plot_analysis(output_dir, title, filetype='.png', show_plot=True):
     extension = _file_extension(filetype)
     fig, ax = plt.subplots(figsize=(9, 5.5))
     try:
-        _plot_analysis_on_ax(ax, output_dir, title)
+        _plot_analysis_on_ax(ax, output_dir, title, confidence=confidence)
         fig.tight_layout()
         output_path = output_dir / f'rsa_by_layer.{extension}'
         fig.savefig(output_path, dpi=300, bbox_inches='tight')
@@ -85,7 +86,8 @@ def plot_analysis(output_dir, title, filetype='.png', show_plot=True):
     return output_path
 
 
-def plot_analyses(output_dirs, titles, filetype='.png', show_plot=True):
+def plot_analyses(output_dirs, titles, filetype='.png', show_plot=True,
+        confidence=0.95):
     """
     Plot saved analyses as panels in one side-by-side figure.
 
@@ -93,6 +95,7 @@ def plot_analyses(output_dirs, titles, filetype='.png', show_plot=True):
     titles: panel titles in the same order as output_dirs
     filetype: shared output format, ``.png`` or ``.pdf`` (default ``.png``)
     show_plot: enable Matplotlib interactive mode and show the figure
+    confidence: confidence level for Student's t intervals around means
 
     The combined figure is saved as ``rsa_by_layer_panels.<filetype>`` in
     the parent directory of the first analysis directory. Returns that path.
@@ -113,7 +116,8 @@ def plot_analyses(output_dirs, titles, filetype='.png', show_plot=True):
                 zip(axes[0], output_dirs, titles)):
             _plot_analysis_on_ax(ax, Path(output_dir), title,
                 show_legend=index == 0,
-                legend_location='lower left' if index == 0 else None)
+                legend_location='lower left' if index == 0 else None,
+                confidence=confidence)
         fig.tight_layout()
         output_path = (Path(output_dirs[0]).parent
             / f'rsa_by_layer_panels.{extension}')
@@ -126,7 +130,7 @@ def plot_analyses(output_dirs, titles, filetype='.png', show_plot=True):
 
 
 def _plot_analysis_on_ax(ax, output_dir, title, show_legend=True,
-        legend_location=None):
+        legend_location=None, confidence=0.95):
     """Plot one saved analysis on an existing Matplotlib axes."""
     scores_path = output_dir / 'rsa_scores.csv'
     score_columns, score_rows = _read_csv(scores_path)
@@ -137,7 +141,7 @@ def _plot_analysis_on_ax(ax, output_dir, title, show_legend=True,
 
     _plot_raw_scores(ax, layers, active_series, values_by_series)
     _plot_mean_confidence_intervals(ax, layers, active_series,
-        values_by_series)
+        values_by_series, confidence)
     ax.axhline(0, color='0.4', linewidth=0.8, linestyle='-')
     ax.set_title(str(title))
     ax.set_xlabel('Layer')
@@ -255,16 +259,16 @@ def _plot_raw_scores(ax, layers, active_series, values_by_series):
 
 
 def _plot_mean_confidence_intervals(ax, layers, active_series,
-        values_by_series):
-    """Plot raw-score means and 95% confidence intervals around the means."""
+        values_by_series, confidence):
+    """Plot raw-score means and confidence intervals around the means."""
     x_values = [layer['value'] for layer in layers]
     for series in active_series:
-        statistics = [mean_confidence_interval(
+        statistics = [score_statistics(
             values_by_series[series['score']].get(layer, []),
-            confidence=PLOT_CONFIDENCE) for layer in x_values]
-        means = [statistic[0] for statistic in statistics]
-        lower = [statistic[1] for statistic in statistics]
-        upper = [statistic[2] for statistic in statistics]
+            confidence=confidence) for layer in x_values]
+        means = [statistic['mean'] for statistic in statistics]
+        lower = [statistic['mean_ci_lower'] for statistic in statistics]
+        upper = [statistic['mean_ci_upper'] for statistic in statistics]
         ax.fill_between(x_values, lower, upper, color=series['color'],
             alpha=0.14)
         ax.plot(x_values, means, color=series['color'],
