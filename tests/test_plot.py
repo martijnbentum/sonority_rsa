@@ -111,13 +111,20 @@ def test_plot_analyses_saves_side_by_side_panels(tmp_path, monkeypatch):
     write_plot_inputs(first)
     write_plot_inputs(second)
     titles = []
+    legend_calls = []
     original_set_title = matplotlib.axes.Axes.set_title
+    original_legend = matplotlib.axes.Axes.legend
 
     def record_title(self, title, *args, **kwargs):
         titles.append(title)
         return original_set_title(self, title, *args, **kwargs)
 
+    def record_legend(self, *args, **kwargs):
+        legend_calls.append((self, kwargs))
+        return original_legend(self, *args, **kwargs)
+
     monkeypatch.setattr(matplotlib.axes.Axes, 'set_title', record_title)
+    monkeypatch.setattr(matplotlib.axes.Axes, 'legend', record_legend)
 
     output_path = plot_analyses([first, second], ['First', 'Second'],
         show_plot=False)
@@ -125,6 +132,8 @@ def test_plot_analyses_saves_side_by_side_panels(tmp_path, monkeypatch):
     assert output_path == tmp_path / PANELS_PLOT_FILENAME
     assert output_path.read_bytes().startswith(b'\x89PNG')
     assert titles == ['First', 'Second']
+    assert len(legend_calls) == 1
+    assert legend_calls[0][1] == {'loc': 'lower left'}
 
 
 def test_plot_analyses_requires_one_title_per_directory(tmp_path):

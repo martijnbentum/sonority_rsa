@@ -121,8 +121,11 @@ def plot_analyses(output_dirs, titles, filetype='.png', show_plot=True):
     fig, axes = plt.subplots(1, len(output_dirs),
         figsize=(figure_width, 5.5), squeeze=False, sharey=True)
     try:
-        for ax, output_dir, title in zip(axes[0], output_dirs, titles):
-            _plot_analysis_on_ax(ax, Path(output_dir), title)
+        for index, (ax, output_dir, title) in enumerate(
+                zip(axes[0], output_dirs, titles)):
+            _plot_analysis_on_ax(ax, Path(output_dir), title,
+                show_legend=index == 0,
+                legend_location='lower left' if index == 0 else None)
         fig.tight_layout()
         output_path = (Path(output_dirs[0]).parent
             / f'rsa_by_layer_panels.{extension}')
@@ -134,7 +137,8 @@ def plot_analyses(output_dirs, titles, filetype='.png', show_plot=True):
     return output_path
 
 
-def _plot_analysis_on_ax(ax, output_dir, title):
+def _plot_analysis_on_ax(ax, output_dir, title, show_legend=True,
+        legend_location=None):
     """Plot one saved analysis on an existing Matplotlib axes."""
     summary_path = output_dir / 'summary.csv'
     scores_path = output_dir / 'rsa_scores.csv'
@@ -153,7 +157,10 @@ def _plot_analysis_on_ax(ax, output_dir, title):
     ax.set_xticks([layer['value'] for layer in layers],
         [layer['label'] for layer in layers])
     ax.grid(axis='y', alpha=0.25)
-    ax.legend()
+    if show_legend:
+        legend_options = ({'loc': legend_location}
+            if legend_location else {})
+        ax.legend(**legend_options)
 
 
 def _panel_values(values, name):
