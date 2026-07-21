@@ -105,8 +105,8 @@ store at the phrase level; computing them is a separate step (see
 ```python
 from echoframe import Store
 from phraser import Syllable, load_cache
-from sonority_rsa import (display_analysis, plot_analysis, run_analysis,
-    save_analysis)
+from sonority_rsa import (display_analysis, plot_analyses, plot_analysis,
+    run_analysis, save_analysis)
 
 load_cache()
 store = Store('cache')
@@ -135,6 +135,11 @@ display_analysis(summary, results)
 save_analysis(summary, results, log, 'results/')
 plot_analysis('results/', title='RSA by model layer')
 plot_analysis('results/', title='RSA by model layer', filetype='.pdf')
+plot_analyses(
+    ['results/model_a/', 'results/model_b/'],
+    ['Model A', 'Model B'],
+    filetype='.pdf',
+)
 ```
 
 `run_analysis` fetches each layer's population once (one store read per
@@ -261,10 +266,18 @@ A self-contained toy run (with fake stores, no LMDB needed) lives in
   reported.
 - `run_log.json`: everything needed to trace and replay the run
 - `rsa_by_layer.png` or `rsa_by_layer.pdf`: created by
-  `plot_analysis(output_dir, title, filetype='.png')` from the two CSV files.
+  `plot_analysis(output_dir, title, filetype='.png', show_plot=True)` from the
+  two CSV files.
   It shows subset-level RSA values together with per-layer means and
   confidence intervals for sonority, plus intensity, partial RSA, and random
   baseline series when those optional results are available.
+- `rsa_by_layer_panels.png` or `rsa_by_layer_panels.pdf`: created by
+  `plot_analyses(output_dirs, titles, filetype='.png', show_plot=True)` in the
+  parent of the first analysis directory. It shows one analysis per panel and
+  uses the requested file type for the combined figure.
+
+Both plotting functions turn on Matplotlib interactive mode and show the
+figure by default. Pass `show_plot=False` to save without displaying it.
 
 The `run_id` appears in both CSV files and the log, so results stay
 traceable when CSV files from several runs are combined.
