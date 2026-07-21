@@ -14,7 +14,7 @@ from sonority_rsa.fetch import phone_sonority
 from sonority_rsa.intensity import (IntensityComputationError,
     compute_intensity, compute_phone_intensity, compute_praat_intensity)
 from sonority_rsa.partial import partial_spearman_rsa
-from sonority_rsa.plot import plot_analysis
+from sonority_rsa.plot import plot_analyses, plot_analysis
 from sonority_rsa.rdm import (compute_intensity_rsa,
     compute_sonority_random_baseline, compute_sonority_rsa, correlation_rdm,
     intensity_rdm, sonority_rdm, spearman_rsa, upper_triangle)
@@ -37,6 +37,7 @@ __all__ = [
     'intensity_rdm',
     'phone_sonority',
     'partial_spearman_rsa',
+    'plot_analyses',
     'plot_analysis',
     'replay_sampled_keys',
     'run_analysis',
