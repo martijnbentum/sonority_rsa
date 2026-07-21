@@ -147,7 +147,7 @@ def _plot_analysis_on_ax(ax, output_dir, title, show_legend=True,
     ax.set_title(str(title))
     ax.set_xlabel('Layer')
     if show_ylabel:
-        ax.set_ylabel('ρ', rotation=-90)
+        ax.set_ylabel('ρ', rotation=90)
     ax.set_xticks([layer['value'] for layer in layers],
         [layer['label'] for layer in layers])
     ax.grid(axis='y', alpha=0.25)

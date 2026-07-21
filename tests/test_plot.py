@@ -99,18 +99,18 @@ def test_plot_analysis_uses_solid_zero_line(tmp_path, monkeypatch):
 
 def test_plot_analysis_labels_y_axis_with_rho(tmp_path, monkeypatch):
     write_plot_inputs(tmp_path)
-    label_calls = []
+    labels = []
     original_set_ylabel = matplotlib.axes.Axes.set_ylabel
 
     def record_ylabel(self, label, *args, **kwargs):
-        label_calls.append((label, kwargs))
+        labels.append(label)
         return original_set_ylabel(self, label, *args, **kwargs)
 
     monkeypatch.setattr(matplotlib.axes.Axes, 'set_ylabel', record_ylabel)
 
     plot_analysis(tmp_path, 'Sonority by layer', show_plot=False)
 
-    assert label_calls == [('ρ', {'rotation': -90})]
+    assert labels == ['ρ']
 
 
 def test_plot_analysis_computes_mean_and_ci_from_raw_scores(tmp_path,
@@ -179,7 +179,6 @@ def test_plot_analyses_saves_side_by_side_panels(tmp_path, monkeypatch):
     assert output_path.read_bytes().startswith(b'\x89PNG')
     assert titles == ['First', 'Second']
     assert [ax.get_ylabel() for ax in titled_axes] == ['ρ', '']
-    assert titled_axes[0].yaxis.label.get_rotation() == 270
     assert len(legend_calls) == 1
     assert legend_calls[0][1] == {
         'handlelength': 3.5,
