@@ -161,7 +161,10 @@ def test_plot_analyses_saves_side_by_side_panels(tmp_path, monkeypatch):
     assert output_path.read_bytes().startswith(b'\x89PNG')
     assert titles == ['First', 'Second']
     assert len(legend_calls) == 1
-    assert legend_calls[0][1] == {'loc': 'lower left'}
+    assert legend_calls[0][1] == {
+        'handlelength': 3.5,
+        'loc': 'lower left',
+    }
 
 
 def test_plot_analyses_requires_one_title_per_directory(tmp_path):

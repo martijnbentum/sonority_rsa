@@ -150,8 +150,9 @@ def _plot_analysis_on_ax(ax, output_dir, title, show_legend=True,
         [layer['label'] for layer in layers])
     ax.grid(axis='y', alpha=0.25)
     if show_legend:
-        legend_options = ({'loc': legend_location}
-            if legend_location else {})
+        legend_options = {'handlelength': 3.5}
+        if legend_location:
+            legend_options['loc'] = legend_location
         ax.legend(**legend_options)
 
 
