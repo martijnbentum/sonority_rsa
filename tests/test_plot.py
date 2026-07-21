@@ -1,9 +1,11 @@
 import csv
 
 import matplotlib.axes
+import matplotlib.pyplot
 import pytest
 
-from sonority_rsa.plot import PLOT_FILENAME, plot_analysis
+from sonority_rsa.plot import (PANELS_PLOT_FILENAME, PLOT_FILENAME,
+    plot_analyses, plot_analysis)
 
 
 SUMMARY_ROWS = [
@@ -34,7 +36,8 @@ def write_plot_inputs(output_dir, summary_rows=SUMMARY_ROWS,
 def test_plot_analysis_saves_sonority_plot(tmp_path):
     write_plot_inputs(tmp_path)
 
-    output_path = plot_analysis(tmp_path, 'Sonority by layer')
+    output_path = plot_analysis(tmp_path, 'Sonority by layer',
+        show_plot=False)
 
     assert output_path == tmp_path / PLOT_FILENAME
     assert output_path.read_bytes().startswith(b'\x89PNG')
@@ -44,7 +47,7 @@ def test_plot_analysis_can_save_pdf(tmp_path):
     write_plot_inputs(tmp_path)
 
     output_path = plot_analysis(tmp_path, 'Sonority by layer',
-        filetype='.pdf')
+        filetype='.pdf', show_plot=False)
 
     assert output_path == tmp_path / 'rsa_by_layer.pdf'
     assert output_path.read_bytes().startswith(b'%PDF')
@@ -55,7 +58,78 @@ def test_plot_analysis_rejects_unsupported_filetype(tmp_path, filetype):
     write_plot_inputs(tmp_path)
 
     with pytest.raises(ValueError, match=r'\.pdf, \.png'):
-        plot_analysis(tmp_path, 'Sonority by layer', filetype=filetype)
+        plot_analysis(tmp_path, 'Sonority by layer', filetype=filetype,
+            show_plot=False)
+
+
+def test_plot_analysis_shows_interactively_by_default(tmp_path,
+        monkeypatch):
+    write_plot_inputs(tmp_path)
+    calls = []
+    monkeypatch.setattr(matplotlib.pyplot, 'ion',
+        lambda: calls.append('ion'))
+    monkeypatch.setattr(matplotlib.pyplot, 'show',
+        lambda **kwargs: calls.append(('show', kwargs)))
+
+    plot_analysis(tmp_path, 'Sonority by layer')
+
+    assert calls == ['ion', ('show', {'block': False})]
+
+
+def test_plot_analysis_can_suppress_interactive_display(tmp_path,
+        monkeypatch):
+    write_plot_inputs(tmp_path)
+    monkeypatch.setattr(matplotlib.pyplot, 'ion',
+        lambda: pytest.fail('ion should not be called'))
+    monkeypatch.setattr(matplotlib.pyplot, 'show',
+        lambda **kwargs: pytest.fail('show should not be called'))
+
+    plot_analysis(tmp_path, 'Sonority by layer', show_plot=False)
+
+
+def test_plot_analysis_uses_solid_zero_line(tmp_path, monkeypatch):
+    write_plot_inputs(tmp_path)
+    line_styles = []
+    original_axhline = matplotlib.axes.Axes.axhline
+
+    def record_axhline(self, *args, **kwargs):
+        line_styles.append(kwargs.get('linestyle'))
+        return original_axhline(self, *args, **kwargs)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, 'axhline', record_axhline)
+
+    plot_analysis(tmp_path, 'Sonority by layer', show_plot=False)
+
+    assert line_styles == ['-']
+
+
+def test_plot_analyses_saves_side_by_side_panels(tmp_path, monkeypatch):
+    first = tmp_path / 'first'
+    second = tmp_path / 'second'
+    first.mkdir()
+    second.mkdir()
+    write_plot_inputs(first)
+    write_plot_inputs(second)
+    titles = []
+    original_set_title = matplotlib.axes.Axes.set_title
+
+    def record_title(self, title, *args, **kwargs):
+        titles.append(title)
+        return original_set_title(self, title, *args, **kwargs)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, 'set_title', record_title)
+
+    output_path = plot_analyses([first, second], ['First', 'Second'],
+        show_plot=False)
+
+    assert output_path == tmp_path / PANELS_PLOT_FILENAME
+    assert output_path.read_bytes().startswith(b'\x89PNG')
+    assert titles == ['First', 'Second']
+
+
+def test_plot_analyses_requires_one_title_per_directory(tmp_path):
+    with pytest.raises(ValueError, match='same length'):
+        plot_analyses([tmp_path, tmp_path], ['Only one'], show_plot=False)
 
 
 def test_plot_analysis_uses_raw_scores_summary_and_optional_series(tmp_path,
@@ -92,7 +166,7 @@ def test_plot_analysis_uses_raw_scores_summary_and_optional_series(tmp_path,
     monkeypatch.setattr(matplotlib.axes.Axes, 'plot', record_plot)
     monkeypatch.setattr(matplotlib.axes.Axes, 'scatter', record_scatter)
 
-    plot_analysis(tmp_path, 'All RSA predictors')
+    plot_analysis(tmp_path, 'All RSA predictors', show_plot=False)
 
     assert labels == ['Sonority', 'Intensity', 'Random baseline']
     assert scatter_values == pytest.approx([
@@ -132,7 +206,7 @@ def test_plot_analysis_uses_dashed_partial_rsa_series(tmp_path, monkeypatch):
 
     monkeypatch.setattr(matplotlib.axes.Axes, 'plot', record_plot)
 
-    plot_analysis(tmp_path, 'Partial RSA')
+    plot_analysis(tmp_path, 'Partial RSA', show_plot=False)
 
     assert styles == {
         'Sonority': '-',
@@ -147,7 +221,7 @@ def test_plot_analysis_rejects_incomplete_optional_series(tmp_path):
     write_plot_inputs(tmp_path, score_rows=score_rows)
 
     with pytest.raises(ValueError, match='mean_intensity_rsa'):
-        plot_analysis(tmp_path, 'Incomplete data')
+        plot_analysis(tmp_path, 'Incomplete data', show_plot=False)
 
 
 def test_plot_analysis_rejects_unpaired_partial_rsa_series(tmp_path):
@@ -156,4 +230,4 @@ def test_plot_analysis_rejects_unpaired_partial_rsa_series(tmp_path):
     write_plot_inputs(tmp_path, score_rows=score_rows)
 
     with pytest.raises(ValueError, match='mean_intensity_partial_rsa'):
-        plot_analysis(tmp_path, 'Incomplete partial data')
+        plot_analysis(tmp_path, 'Incomplete partial data', show_plot=False)
