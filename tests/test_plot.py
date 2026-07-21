@@ -97,6 +97,22 @@ def test_plot_analysis_uses_solid_zero_line(tmp_path, monkeypatch):
     assert line_styles == ['-']
 
 
+def test_plot_analysis_labels_y_axis_with_rho(tmp_path, monkeypatch):
+    write_plot_inputs(tmp_path)
+    labels = []
+    original_set_ylabel = matplotlib.axes.Axes.set_ylabel
+
+    def record_ylabel(self, label, *args, **kwargs):
+        labels.append(label)
+        return original_set_ylabel(self, label, *args, **kwargs)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, 'set_ylabel', record_ylabel)
+
+    plot_analysis(tmp_path, 'Sonority by layer', show_plot=False)
+
+    assert labels == ['ρ']
+
+
 def test_plot_analysis_computes_mean_and_ci_from_raw_scores(tmp_path,
         monkeypatch):
     score_rows = [SCORE_ROWS[2], SCORE_ROWS[0], SCORE_ROWS[3], SCORE_ROWS[1]]
@@ -139,12 +155,14 @@ def test_plot_analyses_saves_side_by_side_panels(tmp_path, monkeypatch):
     write_plot_inputs(first)
     write_plot_inputs(second)
     titles = []
+    titled_axes = []
     legend_calls = []
     original_set_title = matplotlib.axes.Axes.set_title
     original_legend = matplotlib.axes.Axes.legend
 
     def record_title(self, title, *args, **kwargs):
         titles.append(title)
+        titled_axes.append(self)
         return original_set_title(self, title, *args, **kwargs)
 
     def record_legend(self, *args, **kwargs):
@@ -160,6 +178,7 @@ def test_plot_analyses_saves_side_by_side_panels(tmp_path, monkeypatch):
     assert output_path == tmp_path / PANELS_PLOT_FILENAME
     assert output_path.read_bytes().startswith(b'\x89PNG')
     assert titles == ['First', 'Second']
+    assert [ax.get_ylabel() for ax in titled_axes] == ['ρ', '']
     assert len(legend_calls) == 1
     assert legend_calls[0][1] == {
         'handlelength': 3.5,

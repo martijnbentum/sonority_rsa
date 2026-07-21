@@ -116,6 +116,7 @@ def plot_analyses(output_dirs, titles, filetype='.png', show_plot=True,
                 zip(axes[0], output_dirs, titles)):
             _plot_analysis_on_ax(ax, Path(output_dir), title,
                 show_legend=index == 0,
+                show_ylabel=index == 0,
                 legend_location='lower left' if index == 0 else None,
                 confidence=confidence)
         fig.tight_layout()
@@ -130,7 +131,7 @@ def plot_analyses(output_dirs, titles, filetype='.png', show_plot=True,
 
 
 def _plot_analysis_on_ax(ax, output_dir, title, show_legend=True,
-        legend_location=None, confidence=0.95):
+        show_ylabel=True, legend_location=None, confidence=0.95):
     """Plot one saved analysis on an existing Matplotlib axes."""
     scores_path = output_dir / 'rsa_scores.csv'
     score_columns, score_rows = _read_csv(scores_path)
@@ -145,7 +146,8 @@ def _plot_analysis_on_ax(ax, output_dir, title, show_legend=True,
     ax.axhline(0, color='0.4', linewidth=0.8, linestyle='-')
     ax.set_title(str(title))
     ax.set_xlabel('Layer')
-    ax.set_ylabel('RSA value')
+    if show_ylabel:
+        ax.set_ylabel('ρ')
     ax.set_xticks([layer['value'] for layer in layers],
         [layer['label'] for layer in layers])
     ax.grid(axis='y', alpha=0.25)
